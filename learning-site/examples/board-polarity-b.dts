@@ -1,0 +1,18 @@
+/dts-v1/;
+
+/ {
+    /* 只用于离线说明两个 GPIO 单元，不能作为板端控制器配置。 */
+    gpio: example-gpio {
+        gpio-controller;
+        #gpio-cells = <2>;
+    };
+
+    leds {
+        compatible = "gpio-leds";
+
+        led-0 {
+            /* 教学提供者的两个参数分别为线号与极性。 */
+            gpios = <&gpio 7 1>;
+        };
+    };
+};

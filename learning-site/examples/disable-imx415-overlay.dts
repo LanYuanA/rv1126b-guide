@@ -1,0 +1,8 @@
+/dts-v1/;
+/plugin/;
+/ {
+    fragment@0 {
+        target-path = "/i2c@21120000/imx415_0@1a";
+        __overlay__ { status = "disabled"; };
+    };
+};

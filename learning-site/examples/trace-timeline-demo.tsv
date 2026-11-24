@@ -1,0 +1,15 @@
+# timestamp_ns cpu event key [pid for dq]
+1000000 1 irq_enter 43
+1003000 1 irq_enter 61
+1007000 1 irq_exit 61
+1012000 1 irq_exit 43
+1023000 1 vb2_done 18
+1026000 1 wakeup 412
+1079000 2 switch_in 412
+1092000 2 dq 18 412
+43333333 1 irq_enter 43
+43344333 1 irq_exit 43
+43355333 1 vb2_done 19
+43357333 1 wakeup 412
+43422333 3 switch_in 412
+43439333 3 dq 19 412

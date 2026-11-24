@@ -1,0 +1,10 @@
+# 离线对照样本。每组第 0 轮为基线，以下数字由人工构造。
+# 组名   轮次  alloc free active slots
+warmup   0     0     0    64     96
+warmup   1     128   128  64     224
+warmup   2     128   128  64     224
+warmup   3     128   128  64     224
+growth   0     0     0    64     96
+growth   1     128   120  72     224
+growth   2     128   120  80     224
+growth   3     128   120  88     224

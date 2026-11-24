@@ -1,0 +1,19 @@
+# session clock ns event fields
+# dq/qbuf: queue index sequence. hold/release: 后面再接 branch。
+# alloc: address bytes current_PID stack。free: address current_PID。
+baseline mono 1000000 alloc 0x1000 4096 412 pool
+baseline mono 2000000 alloc 0x1100 64 412 scratch
+baseline mono 3000000 free 0x1100 77
+baseline mono 100000000 dq main 0 10
+baseline mono 101000000 hold main 0 10 backup
+baseline mono 111000000 dq main 1 11
+baseline mono 114000000 qbuf main 1 11
+baseline mono 121000000 dq main 1 13
+baseline mono 122000000 qbuf main 1 13
+baseline mono 190000000 release main 0 10 backup
+baseline mono 192000000 qbuf main 0 10
+baseline mono 200000000 stop 1
+baseline mono 211000000 alloc 0x1100 8192 423 writeback
+baseline mono 220000000 free 0x1100 77
+baseline mono 240000000 stop 2
+baseline mono 260000000 stop 3

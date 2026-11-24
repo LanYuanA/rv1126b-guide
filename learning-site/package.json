@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "vitepress": "1.6.4"
+  },
+  "name": "rv1126b-learning-site",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "private": true
+}
