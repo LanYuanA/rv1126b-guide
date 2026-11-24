@@ -58,7 +58,16 @@ async_synchronize_full_domain(&async_domain);
 
 这里将每项使能提交到异步域，再等待该域完成。之后逐项检查返回值，有任何失败就尝试关闭本次已开启的项。数组顺序不能据此解释成物理轨的严格上升顺序。如硬件明确要求先后，驱动及供电依赖应据约束表达。正常的 bulk disable 从末项倒序处理，遇错误尝试恢复已关闭项。
 
-<Sdk id="regulator-bulk-on" />
+源码摘录 `kernel-6.1/drivers/regulator/core.c:4964–4969`
+
+~~~c
+int regulator_bulk_enable(int num_consumers,
+			  struct regulator_bulk_data *consumers)
+{
+	ASYNC_DOMAIN_EXCLUSIVE(async_domain);
+	int i;
+	int ret = 0;
+~~~
 
 dummy 分支在找不到供应者且符合条件时可提供替代对象。得到它不意味着软件操作真实稳压器。应区分模组使用板上固定电源、固件省略实际可控电源描述，以及查找曾因依赖未就绪返回错误。历史日志只能确认当时命中了 dummy 路径。
 

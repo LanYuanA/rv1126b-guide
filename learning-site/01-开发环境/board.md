@@ -29,15 +29,44 @@ rg -n -A7 'cam_clk0_pins:|i2c3m1_pins:' "$tree/rv1126b-pinctrl.dtsi"
 
 父节点 `&i2c3` 选择 `i2c3m1_pins`。跟到 `rockchip,pins`，SCL 对应 `<4 RK_PA4 6 …>`，SDA 对应 `<4 RK_PA5 6 …>`。第一格是 GPIO bank，第二格是 bank 内的引脚，第三格选择复用功能，最后一格引用电气配置。两根线服务于整条控制总线。sensor 节点自己的 `pinctrl-0` 指向 `cam_clk0_pins`，这一组把 GPIO4_B1 复用为传感器输入时钟输出。两个同名属性处在不同节点，应沿各自的引用跟读。
 
-<Sdk id="board-dts" />
+源码摘录 `kernel-6.1/arch/arm64/boot/dts/rockchip/rv1126b-alientek.dtsi:489–494`
+
+~~~text
+&i2c3 {
+	status = "okay";
+	pinctrl-0 = <&i2c3m1_pins>;
+
+	imx415_0: imx415_0@1a {
+		compatible = "sony,imx415";
+~~~
 
 板级节点选择管脚组。先沿父控制器的引用查看两根 I2C 线，再查 sensor 自己的时钟组。
 
-<Sdk id="board-i2c-pins" />
+源码摘录 `kernel-6.1/arch/arm64/boot/dts/rockchip/rv1126b-pinctrl.dtsi:653–658`
 
-这里把 A4/A5 交给 I2C3。XCLK 则有自己的一条输出路径，继续读 B1 的复用项。
+~~~text
+i2c3m1_pins: i2c3m1-pins {
+	rockchip,pins =
+		/* i2c3_scl_m1 */
+		<4 RK_PA4 6 &pcfg_pull_none_smt>,
+		/* i2c3_sda_m1 */
+		<4 RK_PA5 6 &pcfg_pull_none_smt>;
+~~~
 
-<Sdk id="board-xclk-pin" />
+两行的 `4` 都表示 GPIO bank 4，`6` 是这两个管脚上 I2C3 M1 的复用值。`pcfg_pull_none_smt` 在 `rv1126b-pinconf.dtsi` 中配置 `bias-disable` 和 `input-schmitt-enable`，即关闭内部偏置并启用施密特输入。总线如何上拉要查原理图。继续看独立的 XCLK 管脚组。
+
+源码摘录 `kernel-6.1/arch/arm64/boot/dts/rockchip/rv1126b-pinctrl.dtsi:25–30`
+
+~~~text
+	cam_clk0_pins: cam-clk0-pins {
+		rockchip,pins =
+			/* cam_clk0_out */
+			<4 RK_PB1 3 &pcfg_pull_none>;
+	};
+};
+~~~
+
+这里的 `RK_PB1` 是 GPIO4_B1，复用值 `3` 选择 `cam_clk0_out`。最后一格 `&pcfg_pull_none` 关闭内部偏置。设备树中的时钟频率要沿 `clocks` 和时钟框架继续追。
 
 ~~~text
 板上供电 → 模组电源轨
@@ -95,7 +124,16 @@ test -f "$dtb"
 
 内核的 newuname 从当前 UTS 命名空间取得字段，再复制到用户空间。观察 machine 与 release 能识别一次查询发生在哪个环境。同名 release 可能来自不同构建，进一步识别还要看版本与来源。
 
-<Sdk id="board-uts-query" />
+源码摘录 `kernel-6.1/kernel/sys.c:1299–1304`
+
+~~~c
+SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
+{
+	struct new_utsname tmp;
+
+	down_read(&uts_sem);
+	memcpy(&tmp, utsname(), sizeof(tmp));
+~~~
 
 ### 给每份输出标记执行位置
 
@@ -151,7 +189,16 @@ read -r -p '目标板序列号：' serial
 
 boot_id 标识内核启动会话。即便序列号相同，拿不同 boot_id 的 IRQ 计数相减也会失去意义。镜像标识、活动树 model 与 cmdline 可用来解释这次启动发生了什么。记录身份卡时，加上取样时刻和连接通道。公开日志前检查序列号及启动参数。可沿内核 sysctl 表看到 boot_id 与处理器的对应关系。
 
-<Sdk id="board-boot-id" />
+源码摘录 `kernel-6.1/drivers/char/random.c:1620–1625`
+
+~~~c
+	.procname	= "boot_id",
+	.data		= &sysctl_bootid,
+	.mode		= 0444,
+	.proc_handler	= proc_do_uuid,
+},
+{
+~~~
 
 ### 本节复盘
 
@@ -209,11 +256,29 @@ cat current
 
 这里两个失败的 **shell 退出码都为 1**，错误原因却不同。stderr 是 `cat` 对系统调用错误的解释。把 stderr 和退出码一起保留，再核对失败发生在路径解析、权限检查还是设备操作。`stat` 中权限分为属主、组、其他用户三组。目录的执行位影响能否穿过该目录查找子项；排查真实路径时可用 `namei -l 路径` 逐级看。挂载位置可用 `findmnt -T 路径` 核对，同一个路径字符串在 WSL 与板端可能落到不同文件系统。
 
-<Sdk id="board-open-check" />
+源码摘录 `kernel-6.1/fs/namei.c:3218–3223`
+
+~~~c
+static int may_open(struct user_namespace *mnt_userns, const struct path *path,
+		    int acc_mode, int flag)
+{
+	struct dentry *dentry = path->dentry;
+	struct inode *inode = dentry->d_inode;
+	int error;
+~~~
 
 访问检查在资源打开前发生。打开成功以后，可以从 proc 的 fd 条目反查这一引用指向哪里。
 
-<Sdk id="board-proc-fd" />
+源码摘录 `kernel-6.1/fs/proc/fd.c:167–172`
+
+~~~c
+static int proc_fd_link(struct dentry *dentry, struct path *path)
+{
+	struct task_struct *task;
+	int ret = -ENOENT;
+
+	task = get_proc_task(d_inode(dentry));
+~~~
 
 换成 `/dev/video23`，先记执行账户、设备节点和完整报错。若 `open` 成功而随后 `VIDIOC_DQBUF` 失败，此时已走过了节点打开阶段，应该记录 ioctl 名称、errno 和队列状态。把应用 stderr 附在同一启动的内核日志旁，按发生时间查对应驱动消息。节点编号会随固件变化，先用 `v4l2-ctl --list-devices` 对照本次枚举结果。[从应用 fd 追到驱动](../02-应用与字符驱动/first-lesson.md)
 
@@ -268,7 +333,16 @@ rg '^CONFIG_VIDEO_ROCKCHIP_CIF=' atk_dlrv1126b_linux6.1_sdk/output/kernel-baseli
 
 在本版源码中命中 CIF 的 `capture.c:13689`。搜固定字串时保留稳定的英文片段，去掉驱动运行时才填入的数字。往上读，函数取第 0 路的行时间和传感器垂直消隐行数，相乘再除以 1000 得到微秒。只有计算值小于 1000 才进入警告分支。按日志代入 859，确实满足条件。它描述的是一帧中垂直消隐的时长，无法据此算出丢了几帧。
 
-<Sdk id="vblank" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/cif/capture.c:13689–13694`
+
+~~~c
+			  "Warning: vblank need >= 1000us if isp work in online, cur %u us\n",
+			  vblank_us);
+	else
+		v4l2_dbg(3, rkcif_debug, &dev->v4l2_dev, "vblank time %u us\n", vblank_us);
+}
+
+~~~
 
 第二次检索会找到定义和两处调用。读第 14184、14465 行前的条件，都有限制早期帧序号的判断，后者还检查 `sditf[0]`。这解释了为何日志可能只在开流初期出现。两次打印也可能来自同一调用点的不同帧，单靠行数无法选择分支。Makefile 把 `capture.o` 归入 `video_rkcif.o`，保存的基线配置给出 `CONFIG_VIDEO_ROCKCHIP_CIF=y`。它们一起说明本地构建如何纳入这个实现。
 
@@ -283,7 +357,16 @@ rg -n 'hw_dev->isp_ver = match_data->isp_ver' "$isp/hw.c"
 
 文件名提供候选范围。OF 匹配表将 RV1126B 的 compatible 连到 `rv1126b_isp_match_data`，该结构指定 `ISP_V35`，驱动再将版本复制给硬件实例。因而沿版本分支阅读之前，应先核对活动设备树里的 compatible 和实际绑定的驱动。把这里的 ISP 版本选择与前面的 CIF 告警打印点分别记在定位卡上，两者位于成像链的不同模块。
 
-<Sdk id="board-isp-match" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/hw.c:911–916`
+
+~~~c
+static const struct isp_match_data rv1126b_isp_match_data = {
+	.clks = rv1126b_isp_clks,
+	.num_clks = ARRAY_SIZE(rv1126b_isp_clks),
+	.isp_ver = ISP_V35,
+	.clk_rate_tbl = rv1126b_isp_clk_rate,
+	.num_clk_rate_tbl = ARRAY_SIZE(rv1126b_isp_clk_rate),
+~~~
 
 ### 用四个层次限定源码结论
 

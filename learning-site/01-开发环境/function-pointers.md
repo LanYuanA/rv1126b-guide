@@ -6,7 +6,7 @@ import exampleFile from '../examples/byte_order.c?url'
 
 打开 RV1126B 的摄像头驱动，搜 `imx415_s_stream(`，很容易找到函数定义，却不容易找到谁调用了它。字符设备驱动也有这个现象。应用写的是 `open("/dev/rvnote", O_RDWR)`，驱动实现的函数却叫 `note_open`。应用没有包含驱动的头文件，两个名字也对不上。内核究竟靠什么把它们接起来？
 
-先单步执行一行 C，再用同样的方法读懂本地 SDK 中的 `filp->f_op->open(inode, filp)`。读代码时反复问自己，**谁决定执行哪段代码？谁保存这次操作的数据？** 先把字节、结构体与回调三项的结果算出来，再到 Linux 中追对象和调用。实验用 WSL 和 `cc`，源码跟读另需工作区中的厂商 SDK。板子可以断开。
+先单步执行一行 C，再用同样的方法读懂本地 SDK 中的 `filp->f_op->open(inode, filp)`。读代码时反复问自己，**谁决定执行哪段代码？谁保存这次操作的数据？** 先把字节、结构体与回调三项的结果算出来，再到 Linux 中追对象和调用。实验用 WSL 和 `cc`，关键源码在下文展示，完整函数可从对应版本的 SDK 中跟读。板子可以断开。
 
 ## 从两个字节读懂一个字段 {#bytes}
 
@@ -14,7 +14,16 @@ import exampleFile from '../examples/byte_order.c?url'
 
 手算得到 `12 34 | 00 00 01 23 | 291 | 0x23`。地址和返回值是两段独立的数据。驱动先把四字节接收槽清零，`len=2` 时让控制器从偏移 `4-len` 写入，再用 `be32_to_cpu` 转为主机整数。掩码 `& 0xff` 留下低八位，不改变原缓冲的字节顺序。动手把两字节改成 `23 01`，先预测哪个结果受影响。寄存器地址保持原值。
 
-<Sdk id="i2c-read" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1408–1413`
+
+~~~c
+static int imx415_read_reg(struct i2c_client *client, u16 reg, unsigned int len,
+			   u32 *val)
+{
+	struct i2c_msg msgs[2];
+	u8 *data_be_p;
+	__be32 data_be = 0;
+~~~
 
 跟到参数 `u32 *val`。这是调用者提供的结果地址。函数返回的 `int` 单独报告成功或失败，成功才写 `*val`。长度为零或大于四会直接返回 `-EINVAL`，防止缓冲范围失效。数组 `msgs[2]` 在本次同步调用期间有效；若异步保存它的首地址，函数退出后便没有可供继续使用的数组。对照下一段温度计，逐次指出“哪个变量保存数据，谁只是指向它”。对任何指针还要问两件事：调用约定是否允许 NULL，以及它指向的对象能活多久。
 
@@ -253,11 +262,29 @@ if (filp->f_op->open) {
 }
 ~~~
 
-<Sdk id="vfs-open" />
+源码摘录 `kernel-6.1/fs/open.c:863–868`
+
+~~~c
+f->f_op = fops_get(inode->i_fop);
+if (WARN_ON(!f->f_op)) {
+	error = -ENODEV;
+	goto cleanup_all;
+}
+
+~~~
 
 走过 VFS 的普通打开准备后，字符 inode 的初始 open 交给字符设备层。
 
-<Sdk id="char-open" />
+源码摘录 `kernel-6.1/fs/char_dev.c:373–378`
+
+~~~c
+static int chrdev_open(struct inode *inode, struct file *filp)
+{
+	const struct file_operations *fops;
+	struct cdev *p;
+	struct cdev *new = NULL;
+	int ret = 0;
+~~~
 
 3. **共享一个主设备号，怎样再选中便笺？** `drivers/char/misc.c` 中的 `register_chrdev(MISC_MAJOR, "misc", &misc_fops)` 登记了共享入口。因此上一步新表的 `open` 在本例中是 `misc_open`。它取 `iminor(inode)` 得到次设备号，遍历已注册的 `misc_list`，匹配 `iter->minor` 后从 `iter->fops` 取得具体设备的表。`rvnote` 登记的正是 `&note_ops`。下面摘自它找到表之后的成功路径，注意 `file` 从头到尾是同一个参数。
 
@@ -270,11 +297,29 @@ if (file->f_op->open)
 	err = file->f_op->open(inode, file);
 ~~~
 
-<Sdk id="misc-open" />
+源码摘录 `kernel-6.1/drivers/char/misc.c:100–105`
+
+~~~c
+static int misc_open(struct inode *inode, struct file *file)
+{
+	int minor = iminor(inode);
+	struct miscdevice *c = NULL, *iter;
+	int err = -ENODEV;
+	const struct file_operations *new_fops = NULL;
+~~~
 
 4. **在表里读出调用目标和返回约定。** 打开 `rvnote.c`，`note_dev.fops` 指向 `note_ops`，其中 `.open = note_open`。所以刚才的 `file->f_op->open(inode, file)` 实际执行 `note_open(inode, file)`。`struct file_operations` 里 `open` 的返回类型是 `int`，驱动成功时返回 0，失败时返回负的错误码。应用得到的 fd 来自上层打开流程，只有成功打开的 `file` 才会安装到预留的 fd 槽位。**驱动回调返回 0** 和 **应用收到一个 fd** 属于两次不同的返回。[便笺字符驱动完整实现](../02-应用与字符驱动/char-driver.md#misc)
 
-<Sdk id="file-ops" />
+源码摘录 `kernel-6.1/include/linux/fs.h:2168–2173`
+
+~~~c
+struct file_operations {
+	struct module *owner;
+	loff_t (*llseek) (struct file *, loff_t, int);
+	ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
+	ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
+	ssize_t (*read_iter) (struct kiocb *, struct iov_iter *);
+~~~
 
 **怎么知道在哪里停下了？** 用户程序看见 `open` 返回 `-1` 后先记 `errno`。比如路径分量不存在会遇到 `ENOENT`，该次调用还没有到 `note_open`。在 `chrdev_open` 中找不到对应的 cdev 有一条明确的 `-ENXIO` 分支。`misc_open` 按 minor 查找并重试后仍找不到操作表可以返回 `-ENODEV`。`note_open` 分配便笺失败则返回 `-ENOMEM`。错误码可能有多个来源，定位时要结合节点类型、主次设备号、注册情况和具体返回点。这四处是可在源码中核对的例子。
 
@@ -347,7 +392,16 @@ A 得 `fr`，C 接着得 `ame`。B 在它自己的空便笺上读到 0 字节。
 
 纸上考虑把 `note_open` 扩为先分配会话、再创建一个可能失败的子资源、最后把会话交给 `private_data`。当子资源构造失败时，会话仍由打开函数负责释放，因为此时没有交给成功打开对象。等回调返回 0 后，最后一份 `file` 引用消失才能通过 `note_release` 释放成功建立的会话。用这三个状态分别画出清理路径。清理顺序应反过来，先撤掉依赖会话的子资源，再释放会话。
 
-<Sdk id="vfs-final-put" />
+源码摘录 `kernel-6.1/fs/file_table.c:294–299`
+
+~~~c
+static void __fput(struct file *file)
+{
+	struct dentry *dentry = file->f_path.dentry;
+	struct vfsmount *mnt = file->f_path.mnt;
+	struct inode *inode = file->f_inode;
+	fmode_t mode = file->f_mode;
+~~~
 
 ## 7. 带着同一套读法翻开 IMX415
 
@@ -361,7 +415,16 @@ rg -n 'static int imx415_s_stream|struct v4l2_subdev_video_ops imx415_video_ops|
 
 SDK 的 `imx415_video_ops` 中有 `.s_stream = imx415_s_stream`。外层 `imx415_subdev_ops.video` 指向它。以后当管线代码通过这个子设备的视频操作表发出开关流请求，目标便是 `imx415_s_stream(struct v4l2_subdev *sd, int on)`。`sd` 指明哪个子设备，`on` 表示开或关。这里用的是 V4L2 子设备框架定义的签名，和刚才的 `file_operations.open` 分属两张不同的表。
 
-<Sdk id="sensor-video-ops" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:2862–2867`
+
+~~~c
+static const struct v4l2_subdev_video_ops imx415_video_ops = {
+	.s_stream = imx415_s_stream,
+	.g_frame_interval = imx415_g_frame_interval,
+};
+
+static const struct v4l2_subdev_pad_ops imx415_pad_ops = {
+~~~
 
 在驱动里找到 `.s_stream = imx415_s_stream`，足以指出它提供了哪个回调。若要说明“采集程序的哪一个动作、在什么条件下导致传感器开流”，还要找到管线的调用点并核对运行时行为。相机章节会沿 `VIDIOC_STREAMON`、缓冲队列与媒体管线接上这段路径。[从 open 到 VB2 取帧](../05-相机驱动实践/capture.md)
 

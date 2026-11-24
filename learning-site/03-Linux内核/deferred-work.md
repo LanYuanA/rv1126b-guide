@@ -35,7 +35,20 @@ atomic_dec(&q->owned_by_drv_count);
 
 先提交完成项，再通知等待者。出队端还要重新检查停止、错误和数据是否可用。
 
-<Sdk id="done" :start="1103" :lines="10" />
+源码摘录 `kernel-6.1/drivers/media/common/videobuf2/videobuf2-core.c:1103–1112`
+
+~~~c
+spin_unlock_irqrestore(&q->done_lock, flags);
+
+trace_vb2_buf_done(q, vb);
+
+switch (state) {
+case VB2_BUF_STATE_QUEUED:
+	return;
+default:
+	/* Inform any processes that may be waiting for buffers */
+	wake_up(&q->done_wq);
+~~~
 
 队列的上锁与发布先发生。对于正常完成或错误完成等情况，随后才执行 wake_up。由前面的 switch 可以看到，重新标为 QUEUED 的分支会直接返回。消费者的判断如下。
 

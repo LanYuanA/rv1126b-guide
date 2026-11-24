@@ -40,7 +40,16 @@ if (sd_fwnode == asd->match.fwnode)
 
 简单路径比较固件节点指针。框架还处理“设备节点与端点节点”不在同一层的情况，会核对端点所属设备。这里匹配的是固件标识。实体显示名称、I2C 地址或 video 编号不能代替匹配键。
 
-<Sdk id="notifier" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/cif/dev.c:2258–2263`
+
+~~~c
+static int cif_subdev_notifier(struct rkcif_device *cif_dev)
+{
+	struct v4l2_async_notifier *ntf = &cif_dev->notifier;
+	struct device *dev = cif_dev->dev;
+	int ret;
+
+~~~
 
 ## bound 与 complete 分别改变什么？
 
@@ -68,7 +77,16 @@ return v4l2_async_nf_call_complete(notifier);
 
 complete 要等根 notifier 的依赖树就绪。CIF 的完成回调可经 pad ops 查询 get_mbus_config，再按实现建立链接和注册节点。没有某次日志不一定是没有执行，还需核对日志级别和同次启动条件。
 
-<Sdk id="cif-notify-complete" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/cif/dev.c:2117–2122`
+
+~~~c
+static int subdev_notifier_complete(struct v4l2_async_notifier *notifier)
+{
+	struct rkcif_device *dev;
+	struct rkcif_sensor_info *sensor;
+	struct v4l2_subdev *sd;
+	struct v4l2_device *v4l2_dev = NULL;
+~~~
 
 ## 接上图以后，怎样继续到开流？
 

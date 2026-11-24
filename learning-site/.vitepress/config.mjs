@@ -1,5 +1,4 @@
 import { defineConfig } from 'vitepress'
-import { localSourceReader } from './local-source.mjs'
 
 const sections = [
   ['从哪里开始', [
@@ -124,8 +123,7 @@ export default defineConfig({
   title: 'RV1126B 驱动开发笔记',
   description: '从字符设备和内核机制到 IMX415 成像、调试与工程实作',
   base: '/rv1126b-guide/',
-  srcExclude: ['README.md'],
-  vite: { plugins: [localSourceReader()] },
+  srcExclude: ['README.md', 'THIRD_PARTY_NOTICES.md'],
   themeConfig: {
     nav: [
       { text: '开发路线', link: '/导航/roadmap' },

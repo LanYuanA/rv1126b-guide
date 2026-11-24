@@ -39,7 +39,16 @@ rg 'imx415 3-001a:.*(pinstate|Detected imx415 id)' output/camera-check/dmesg-bef
 
 provider 用 pinctrl_desc 注册能力。pctlops 负责组及 DT 映射等描述，pmxops 负责功能选择，confops 应用电气参数。consumer 通过 pinctrl 句柄拥有一组按名查找的状态，核心将每项状态表示成可以逐项应用的 settings。这与板级节点引用哪个 group 是两个方向，先看 provider 支持什么，再看 consumer 选了什么。
 
-<Sdk id="pinctrl-register-provider" />
+源码摘录 `kernel-6.1/drivers/pinctrl/core.c:2172–2177`
+
+~~~c
+int pinctrl_register_and_init(struct pinctrl_desc *pctldesc,
+			      struct device *dev, void *driver_data,
+			      struct pinctrl_dev **pctldev)
+{
+	struct pinctrl_dev *p;
+
+~~~
 
 ## 沿 DTS 查到实际寄存器回调
 
@@ -52,11 +61,29 @@ consumer 的 pinctrl-names[i] / pinctrl-i → 配置节点 phandle
  → config: pinconf_apply_setting → provider pinconf 回调
 ~~~
 
-<Sdk id="pinctrl-parse-state" />
+源码摘录 `kernel-6.1/drivers/pinctrl/devicetree.c:200–205`
+
+~~~c
+int pinctrl_dt_to_map(struct pinctrl *p, struct pinctrl_dev *pctldev)
+{
+	struct device_node *np = p->dev->of_node;
+	int state, ret;
+	char *propname;
+	struct property *prop;
+~~~
 
 DT 解析生成映射。选择具名 state 后，commit 路径才逐项提交。
 
-<Sdk id="pinctrl-apply-state" />
+源码摘录 `kernel-6.1/drivers/pinctrl/core.c:1247–1252`
+
+~~~c
+static int pinctrl_commit_state(struct pinctrl *p, struct pinctrl_state *state)
+{
+	struct pinctrl_setting *setting, *setting2;
+	struct pinctrl_state *old_state = READ_ONCE(p->state);
+	int ret;
+
+~~~
 
 遇到复用设置时走 pinmux 分支，其他电气配置由 pinconf 处理。
 

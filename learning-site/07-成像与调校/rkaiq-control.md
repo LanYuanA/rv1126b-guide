@@ -16,7 +16,14 @@ sensor_name = rk_aiq_uapi2_sysctl_getBindedSnsEntNmByVd(media_info->mainpath);
 
 sensor entity 名包含模组索引、方向等信息，交给 RKAIQ 用于选上下文。历史 IMX415 是 `m00_b_imx415 3-001a`。若另一 ISP 没绑定可用传感器，服务应按实际枚举结果处理。video 编号会因驱动注册顺序变化，不能按历史号固定控制设备。
 
-<Sdk id="rkaiq-media-discovery" />
+流程示例（自写），对照位置 `external/camera_engine_rkaiq/rkaiq_3A_server/rkaiq_3A_server.cpp:112–117`
+
+~~~text
+遍历当前 media 设备的 entity
+    rkisp-isp-subdev   → 保存 ISP 子设备路径
+    rkisp-input-params → 保存参数节点路径
+    rkisp-statistics   → 保存统计节点路径
+~~~
 
 ## init、prepare、start 分别解决什么问题
 
@@ -33,7 +40,14 @@ media_info->aiq_ctx = rk_aiq_uapi2_sysctl_init(media_info->sensor_entity_name,
 
 样例的 IQ_PATH 是 `/etc/iqfiles/`，prepare 展示的是这条启动分支。其源码还把框架对 stream status 的内建监听关闭，注明服务器自己监听事件。这说明这一服务可以把生命周期和视频开关协调起来。验证现场模式时应看实际启动程序、参数与日志，应用加载两个上下文同时操作同一个物理 sensor 和 ISP 参数队列会使结果难以解释。
 
-<Sdk id="rkaiq" />
+流程示例（自写），对照位置 `external/camera_engine_rkaiq/rkaiq_3A_server/rkaiq_3A_server.cpp:146–151`
+
+~~~text
+aiq = rk_aiq_uapi2_sysctl_init(sensor_entity, iq_dir, …)
+服务器接管 stream 事件监听
+    rk_aiq_uapi2_sysctl_setListenStrmStatus(aiq, false)
+多摄时配置并发模式，然后进入 prepare
+~~~
 
 ## 统计数据和应用图像走的是两条路
 
@@ -53,7 +67,16 @@ flowchart LR
 2. RKAIQ 用统计、模式和当前参数求解。曝光、增益属于 sensor 控制；ISP 的白平衡增益、矩阵等属于 ISP 参数。对焦是否写入 lens 取决于硬件存在及控制路径。每种结果的提交和生效时机可以不同。
 3. V35 的统计端有 `frame_id` 和 `params_id`，参数端按目标 `frame_id` 检查队列。记录某帧统计用的参数号，才能做跨帧 A/B 对齐。sensor 曝光和增益也可能有不同更新延迟，对应 IQ 的 `CISExpUpdate` 字段。SDK C 硬件层按线性或 HDR 读延迟配置，不能只截一个返回值推断开始生效的帧。
 
-<Sdk id="rkaiq-exposure-delay" />
+源码摘录 `external/camera_engine_rkaiq/rkaiq/hwi_c/aiq_CamHwBase.c:3694–3699`
+
+~~~c
+} else {
+    sint32_t timeDelay = pCamHw->_cur_calib_infos.sensor.CISExpUpdate.Linear.time_update;
+    sint32_t gainDelay = pCamHw->_cur_calib_infos.sensor.CISExpUpdate.Linear.gain_update;
+
+    sensorHw->set_exp_delay_info(
+        sensorHw, pCamHw->_cur_calib_infos.sensor.CISExpUpdate.Linear.time_update,
+~~~
 
 ## IQ 文件从哪里选，模组换了怎么核对
 
@@ -61,7 +84,16 @@ SDK 的 C 接口通过 sensor 名找到模块信息，读取 sensor、module 和
 
 换镜头或模组时，核对实物料号 → 设备树 module/lens 属性 → 驱动回报 → 运行库/ISP 版本 → 选中的路径与版本 → 画质 A/B 各步。最后记录从启动日志得到的实际文件名，方便回溯。源树中出现候选文件或默认链接只能说明构建素材，镜像也可能选择不同打包路径。
 
-<Sdk id="rkaiq-iq-selection" />
+源码摘录 `external/camera_engine_rkaiq/rkaiq/hwi_c/aiq_CamHwBase.c:903–908`
+
+~~~c
+    LOGE_CAMHW_SUBM(ISP20HW_SUBM, "no camera module info, check the drv !");
+    return XCAM_RETURN_ERROR_SENSOR;
+}
+sensor_name = base_inf->sensor;
+strncpy(sensor_name_full, sensor_name, 32);
+
+~~~
 
 ## 复核原厂运行时的三个视频节点
 

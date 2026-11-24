@@ -68,7 +68,16 @@ i2c_set_clientdata(client, sd);
 
 container_of 按 subdev 在外层结构的成员偏移求起点。它要求传入的确实是该实例的内嵌成员。学习模型用 offsetof 表达同一关系。不要把一个单独分配、类型相似的对象当成有效成员传入。
 
-<Sdk id="sensor-instance" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:209–214`
+
+~~~c
+struct imx415 {
+	struct i2c_client	*client;
+	struct clk		*xvclk;
+	struct gpio_desc	*reset_gpio;
+	struct gpio_desc	*power_gpio;
+	struct regulator_bulk_data supplies[IMX415_NUM_SUPPLIES];
+~~~
 
 ## 操作表从哪里接到实际功能？
 

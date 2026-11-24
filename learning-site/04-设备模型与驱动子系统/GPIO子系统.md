@@ -31,7 +31,16 @@ bash learning-site/examples/inspect-camera-pins.sh gpio
 | gpio_device | gpiolib 管理 | 保存 chip 和描述符数组，承接设备模型中的对象寿命 |
 | gpio_desc | core 为一条线维护 | 关联 gpio_device，保存请求、极性、方向等标志，供消费者持有 |
 
-<Sdk id="gpio-register-chip" />
+源码摘录 `kernel-6.1/drivers/gpio/gpiolib.c:595–600`
+
+~~~c
+int gpiochip_add_data_with_key(struct gpio_chip *gc, void *data,
+			       struct lock_class_key *lock_key,
+			       struct lock_class_key *request_key)
+{
+	struct fwnode_handle *fwnode = NULL;
+	struct gpio_device *gdev;
+~~~
 
 读 gpiochip_add_data_with_key，找分配 gpio_device、初始化各线描述符和把 chip 注册到框架的步骤。注册后多个消费者可在同一 chip 上各申请不同 offset。旧整数 GPIO API 依赖全局编号；描述符接口以设备和 consumer 名定位，调用处通常无需知道全局 base。用户空间 GPIO 字符设备同样按 chip 和 line offset 组织。
 
@@ -45,7 +54,16 @@ devm_gpiod_get(dev, "enable", flags)
  → 请求描述符，设置初始方向/极性标志 → 返回给消费者
 ~~~
 
-<Sdk id="gpio-get-index" />
+源码摘录 `kernel-6.1/drivers/gpio/gpiolib.c:4084–4089`
+
+~~~c
+struct gpio_desc *__must_check gpiod_get_index(struct device *dev,
+					       const char *con_id,
+					       unsigned int idx,
+					       enum gpiod_flags flags)
+{
+	unsigned long lookupflags = GPIO_LOOKUP_FLAGS_DEFAULT;
+~~~
 
 通用获取方法负责资源查找与申请。固件是 OF 时，用下面的查找分支读 consumer 对应属性。
 

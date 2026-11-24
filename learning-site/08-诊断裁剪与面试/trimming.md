@@ -33,8 +33,26 @@ entry = proc_create("config.gz", S_IFREG | S_IRUGO, NULL,
                     &config_gz_proc_ops);
 ~~~
 
-<Sdk id="ikconfig-dependencies" />
-<Sdk id="ikconfig-proc-create" />
+源码摘录 `kernel-6.1/init/Kconfig:709–714`
+
+~~~text
+config IKCONFIG_PROC
+	bool "Enable access to .config through /proc/config.gz"
+	depends on IKCONFIG && PROC_FS
+	help
+	  This option enables access to the kernel configuration file
+	  through /proc/config.gz.
+~~~
+源码摘录 `kernel-6.1/kernel/configs.c:58–63`
+
+~~~c
+
+/* create the current config file */
+entry = proc_create("config.gz", S_IFREG | S_IRUGO, NULL,
+		    &config_gz_proc_ops);
+if (!entry)
+	return -ENOMEM;
+~~~
 
 这个例子把导出接口当作可识别变化。开发模式通常需要它核对实板配置，发行模式是否保留应按需求决策。需要 BPF、ftrace 等调试能力时，分别建立调试与产品配置，并逐项评价构建、运行和回退。
 

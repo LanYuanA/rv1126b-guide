@@ -33,7 +33,16 @@ IMX415 通过 `v4l2_async_register_subdev_sensor()` 注册。V4L2 解析 sensor 
 
 这个字段应来自实际 actuator 与模块配置。 `rockchip,camera-module-lens-name` 则可参与模块信息和 IQ 文件名匹配。看到字符串 `default` 无法知道 I2C 总线上执行器是什么、有没有供电或是否绑定。
 
-<Sdk id="v4l2-lens-reference" />
+源码摘录 `kernel-6.1/drivers/media/v4l2-core/v4l2-fwnode.c:1262–1267`
+
+~~~c
+	{ "lens-focus", NULL, 0 },
+};
+unsigned int i;
+
+for (i = 0; i < ARRAY_SIZE(props); i++) {
+	int ret;
+~~~
 
 ### 执行器驱动接受什么
 
@@ -45,7 +54,16 @@ ret = dw9714_set_pos(dev_vcm, dest_pos);
 
 驱动按移动级差或模式计算移动时间，写成功和机械镜组已经稳定是两次事件。应用应核对控件值域、更新时间和影像结果。部分马达只能读到设定的 DAC 或驱动内位置记录，进一步的光学确认凭拍到的图。以上是可跟读的通用执行器驱动，当前板上尚未证实使用 DW9714。 [V4L2 对焦控件](https://docs.kernel.org/6.1/userspace-api/media/v4l/ext-ctrls-camera.html)
 
-<Sdk id="dw9714-position-control" />
+源码摘录 `kernel-6.1/drivers/media/i2c/dw9714.c:594–599`
+
+~~~c
+if (ctrl->id == V4L2_CID_FOCUS_ABSOLUTE) {
+	if (dest_pos > dev_vcm->max_logicalpos) {
+		dev_err(&client->dev,
+			"%s dest_pos is error. %d > %d\n",
+			__func__, dest_pos, dev_vcm->max_logicalpos);
+		return -EINVAL;
+~~~
 
 ## 用离线靶标模拟搜索、迟滞和拒答
 

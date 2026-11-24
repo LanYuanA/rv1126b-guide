@@ -57,47 +57,126 @@ file "$lab/openat"
 
 在 entry.S 找 vectors 中 EL0 的 64 位 sync 项，跟到 entry_handler 与 kernel_entry。汇编保存通用寄存器及异常返回信息。入口把保存现场的栈地址送给 C 处理器，系统调用分派和参数包装之后读取的是这份保存的现场。原来的用户 x0 已保存，汇编把当前 x0 改成栈地址不会丢失原参数。
 
-<Sdk id="arm64-el0-vector" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/entry.S:518–523`
+
+~~~asm
+kernel_ventry	0, t, 64, irq		// IRQ 64-bit EL0
+kernel_ventry	0, t, 64, fiq		// FIQ 64-bit EL0
+kernel_ventry	0, t, 64, error		// Error 64-bit EL0
+
+kernel_ventry	0, t, 32, sync		// Synchronous 32-bit EL0
+kernel_ventry	0, t, 32, irq		// IRQ 32-bit EL0
+~~~
 
 向量先按异常来源进入对应入口。真正保存现场并把栈地址传给 C 处理器的是下面的入口宏。
 
-<Sdk id="arm64-save-context" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/entry.S:560–565`
+
+~~~asm
+SYM_CODE_START_LOCAL(el\el\ht\()_\regsize\()_\label)
+	kernel_entry \el, \regsize
+	mov	x0, sp
+	bl	el\el\ht\()_\regsize\()_\label\()_handler
+	.if \el == 0
+	b	ret_to_user
+~~~
 
 ### 2. 从异常原因选到 SVC64
 
 el0t_64_sync_handler 从 ESR_EL1 取异常类别。SVC64 与数据访问异常是两个分支。只看到“同步异常”尚不能推断请求了哪项系统服务。从 el0_svc 跟入 do_el0_svc，才能看到以保存的 x8 作为调用号。
 
-<Sdk id="arm64-svc" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/entry-common.c:649–654`
+
+~~~c
+asmlinkage void noinstr el0t_64_sync_handler(struct pt_regs *regs)
+{
+	unsigned long esr = read_sysreg(esr_el1);
+
+	switch (ESR_ELx_EC(esr)) {
+	case ESR_ELx_EC_SVC64:
+~~~
 
 识别到 SVC64 后才进入系统调用处理。下面一段从保存现场中取 x8。
 
-<Sdk id="arm64-dispatch" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/syscall.c:201–206`
+
+~~~c
+void do_el0_svc(struct pt_regs *regs)
+{
+	fp_user_discard();
+	el0_svc_common(regs, regs->regs[8], __NR_syscalls, sys_call_table);
+}
+
+~~~
 
 ### 3. 查调用表和参数包装
 
 invoke_syscall 先检查编号是否落在表长度内，再读取表项。越界进入未实现路径，通常得到 −ENOSYS。即便编号合法，表项也可能是未实现入口。原生 sys_call_table 按系统调用头文件展开，ARM64 包装把 pt_regs 中的参数变成 C 函数的实参。这样内核的 openat 实现能收到目录 fd、用户指针、flags 和 mode。
 
-<Sdk id="arm64-invoke-syscall" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/syscall.c:41–46`
+
+~~~c
+static void invoke_syscall(struct pt_regs *regs, unsigned int scno,
+			   unsigned int sc_nr,
+			   const syscall_fn_t syscall_table[])
+{
+	long ret;
+
+~~~
 
 分派器按编号查表。该表在编译时由系统调用宏展开，下一段可看到声明与缺省项。
 
-<Sdk id="arm64-native-table" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/sys.c:58–61`
+
+~~~c
+const syscall_fn_t sys_call_table[__NR_syscalls] = {
+	[0 ... __NR_syscalls - 1] = __arm64_sys_ni_syscall,
+#include <asm/unistd.h>
+};
+~~~
 
 ### 4. 哪一行才开始处理用户路径
 
 在 fs/open.c，从 __NR_openat 的表项追到 SYSCALL_DEFINE4(openat, ...)，再到 do_sys_open 和 do_sys_openat2。后者验证标志、取路径，预留 fd 并尝试打开文件。成功才安装 fd，若文件打开失败则归还预留的编号。此时才有 VFS 路径查找和设备回调可讨论。
 
-<Sdk id="arm64-openat-handler" />
+源码摘录 `kernel-6.1/fs/open.c:1345–1350`
+
+~~~c
+SYSCALL_DEFINE4(openat, int, dfd, const char __user *, filename, int, flags,
+		umode_t, mode)
+{
+	if (force_o_largefile())
+		flags |= O_LARGEFILE;
+	return do_sys_open(dfd, filename, flags, mode);
+~~~
 
 包装转换参数之后进入通用打开路径。fd 的预留、错误归还和成功安装在下一段。
 
-<Sdk id="open-install-fd" />
+源码摘录 `kernel-6.1/fs/open.c:1324–1329`
+
+~~~c
+			fd_install(fd, f);
+		}
+	}
+	putname(tmp);
+	return fd;
+}
+~~~
 
 ### 5. 恢复现场并返回
 
 invoke_syscall 将结果写回保存的寄存器。异常退出路径检查待处理的工作，例如信号或需要调度，然后恢复寄存器和异常返回状态。回到 EL0 后，原始调用看到 x0。标准 C 调用通常由 libc 将负错误码转换成 −1 并设置 errno。EL0 切到 EL1 时，内核可以继续替同一线程执行。如果打开过程需要睡眠，或退出时发现需要重新调度，才可能切换到另一任务。单凭 SVC 不足以数出调度次数。
 
-<Sdk id="arm64-return-el0" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/entry.S:599–604`
+
+~~~asm
+SYM_CODE_START_LOCAL(ret_to_user)
+	ldr	x19, [tsk, #TSK_TI_FLAGS]	// re-check for single-step
+	enable_step_tsk x19, x2
+#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
+	bl	stackleak_erase_on_task_stack
+#endif
+~~~
 
 ## 本节复盘
 

@@ -32,15 +32,42 @@ rg -n 'get_unused_fd_flags|do_filp_open|fd_install' "$k/fs/open.c"
 
 本机显示字符特殊文件，设备号为 1:3。先从进程的挂载视图和起始目录解析路径。dentry 把名字与对应 inode 联系起来；若跨越挂载点还需要切换到对应挂载。最终字符设备 inode 的 i_rdev 保存主次设备号。打开期间 VFS 创建 file，字符设备核心根据设备号找到 cdev，再替换本次 file 的操作表，最后调用设备提供的 open。这里区分三个对象就够用：名字用于找到 inode，设备号用于定位驱动，fd 用于找到**本次打开**。
 
-<Sdk id="vfs-path-open" />
+源码摘录 `kernel-6.1/fs/namei.c:3763–3768`
+
+~~~c
+static struct file *path_openat(struct nameidata *nd,
+			const struct open_flags *op, unsigned flags)
+{
+	struct file *file;
+	int error;
+
+~~~
 
 路径打开的最后阶段已有候选 inode。下面根据字符节点中的设备号进入具体驱动。
 
-<Sdk id="char-open" />
+源码摘录 `kernel-6.1/fs/char_dev.c:373–378`
+
+~~~c
+static int chrdev_open(struct inode *inode, struct file *filp)
+{
+	const struct file_operations *fops;
+	struct cdev *p;
+	struct cdev *new = NULL;
+	int ret = 0;
+~~~
 
 驱动 open 成功以后，上层才发布这次打开的 file。注意后面的 fd 槽位和设备号是两个编号空间。
 
-<Sdk id="open-install-fd" />
+源码摘录 `kernel-6.1/fs/open.c:1324–1329`
+
+~~~c
+			fd_install(fd, f);
+		}
+	}
+	putname(tmp);
+	return fd;
+}
+~~~
 
 在 `do_sys_openat2` 里找到三行：`get_unused_fd_flags` 预留编号，`do_filp_open` 尝试打开，成功才 `fd_install`。失败时看它怎样归还预留的编号。于是 ENOENT 可以发生在查找路径期间，字符设备存在却没有对应 cdev 时还可能在 `chrdev_open` 得到 ENXIO。相同报错文本要结合实际系统调用和内核分支解释。
 
@@ -75,15 +102,42 @@ printf '关闭 A 后，C: '; dd bs=1 count=1 status=none <&4; printf '\n'
 
 `do_filp_open` 使用 dfd 和 name 建立路径解析状态。绝对路径从进程所见的根开始，相对路径从 cwd 或传入的目录 fd 开始。沿挂载点切换文件系统视图，逐分量查找 dentry 并执行必要的权限检查。最后一个路径分量还有自己的打开语义，例如创建或跟随符号链接。可把 `/dev/null` 画成“进程的根 → /dev 的挂载 → null 的 dentry → inode → 待建立的 file”。
 
-<Sdk id="vfs-walk-origin" />
+源码摘录 `kernel-6.1/fs/namei.c:2346–2351`
+
+~~~c
+static const char *path_init(struct nameidata *nd, unsigned flags)
+{
+	int error;
+	const char *s = nd->name->name;
+
+	/* LOOKUP_CACHED requires RCU, ask caller to retry */
+~~~
 
 起点得到后，内核从这个视图逐段前进。遇到挂载或符号链接要继续按相应规则走。
 
-<Sdk id="vfs-walk-components" />
+源码摘录 `kernel-6.1/fs/namei.c:2243–2248`
+
+~~~c
+static int link_path_walk(const char *name, struct nameidata *nd)
+{
+	int depth = 0; // depth <= nd->depth
+	int err;
+
+	nd->last_type = LAST_ROOT;
+~~~
 
 路径查到对象后，下一步才是为这次打开准备 file 和操作表。
 
-<Sdk id="vfs-file-initialize" />
+源码摘录 `kernel-6.1/fs/open.c:826–831`
+
+~~~c
+static int do_dentry_open(struct file *f,
+			  struct inode *inode,
+			  int (*open)(struct inode *, struct file *))
+{
+	static const struct file_operations empty_fops = {};
+	int error;
+~~~
 
 跟 `do_dentry_open` 时标记 file 取得 inode 和初始 f_op 的位置。字符设备的初始操作表会把流程交给 chrdev_open。它用 inode 的设备号查 cdev，再替换本次打开的 file 上的操作表。后续 read 才按这个新表分派。路径权限失败与字符设备驱动 open 返回错误，可以导致相同的“打开失败”表象，需要 errno、节点属性和驱动日志进一步区分。
 
@@ -98,18 +152,54 @@ printf '关闭 A 后，C: '; dd bs=1 count=1 status=none <&4; printf '\n'
 
 预留编号为本次打开留位置。真正发布引用是在 fd_install。dup 则借已有的打开对象，将它安装到另一个槽位。普通 fork 会复制 fd 表中的条目并增加引用，两个表仍可指向同一份 file，所以父子可能互相影响文件偏移。close 清掉调用者那一槽，编号之后可以复用。最后一份 file 引用消失时，才进入最终的释放流程并调用相应 release。
 
-<Sdk id="open-install-fd" />
+源码摘录 `kernel-6.1/fs/open.c:1324–1329`
+
+~~~c
+			fd_install(fd, f);
+		}
+	}
+	putname(tmp);
+	return fd;
+}
+~~~
 
 发布的是 fd 槽位指向 file 的引用。随后其他系统调用可以用这个编号取得它。
 
-<Sdk id="vfs-dup-slot" />
+源码摘录 `kernel-6.1/fs/file.c:1263–1268`
+
+~~~c
+SYSCALL_DEFINE1(dup, unsigned int, fildes)
+{
+	int ret = -EBADF;
+	struct file *file = fget_raw(fildes);
+
+	if (file) {
+~~~
 
 dup 新增了一个槽位引用。关闭其中一个时，只摘掉该槽位。
 
-<Sdk id="vfs-close-slot" />
+源码摘录 `kernel-6.1/fs/file.c:644–649`
+
+~~~c
+int close_fd(unsigned fd)
+{
+	struct files_struct *files = current->files;
+	struct file *file;
+
+	spin_lock(&files->file_lock);
+~~~
 
 摘掉编号和释放打开对象是两步。最后一次引用结束时才进入最终清理。
 
-<Sdk id="vfs-final-put" />
+源码摘录 `kernel-6.1/fs/file_table.c:294–299`
+
+~~~c
+static void __fput(struct file *file)
+{
+	struct dentry *dentry = file->f_path.dentry;
+	struct vfsmount *mnt = file->f_path.mnt;
+	struct inode *inode = file->f_inode;
+	fmode_t mode = file->f_mode;
+~~~
 
 **本节复盘。** 如果 fd 3 已关闭而 release 尚未执行，先找 dup、fork、进程间传递和映射等仍可能持有的引用。再问“同一设备节点打开两次就能并发取帧吗？”这只能证明两次打开成功，队列是共享还是每次打开独立，要看设备实现和当前占用。下一节核对这些回调怎样进入内核或模块产物。[2.4 模块、内建驱动与 Kbuild](kbuild.md)

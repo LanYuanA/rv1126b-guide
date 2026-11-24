@@ -31,7 +31,16 @@ import experimentFile from '../examples/exposure-noise-demo.awk?url'
 
 本地 SDK 的四 lane 线性 3864×2192 RAW10 模式有 HTS `0x044c × 8 = 8800`、VTS `0x08ca = 2250` 和名义 30 fps。该驱动的换算函数先从表计算 pclk，再用 `HTS × 10⁹ / pclk` 得到一行的纳秒数。按这里的驱动定义，pclk 约 594 MHz，行时间约 14.814 µs。这个值来自时序表的计算，现场还可与有效帧周期及所选模式对照。
 
-<Sdk id="imx415-line-time" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1634–1639`
+
+~~~c
+static void imx415_get_pclk_and_tline(struct imx415 *imx415)
+{
+	const struct imx415_mode *mode = imx415->cur_mode;
+
+	imx415->pclk = (u32)div_u64((u64)mode->hts_def * mode->vts_def *
+		mode->max_fps.denominator, mode->max_fps.numerator);
+~~~
 
 ~~~c
 shr0 = imx415->cur_vts - ctrl->val;
@@ -39,7 +48,16 @@ shr0 = imx415->cur_vts - ctrl->val;
 
 线性曝光控制值以行数关联 SHR0。保持 VTS 2250 的例子里，675 行约 10 ms，对应 SHR0=1575；169 行约 2.50 ms，对应 SHR0=2081。驱动读回三个寄存器字节拼出 SHR，再把 `(cur_vts−shr) × tline` 转回 ns。寄存器读回证明当前值已可读，想确认它作用于哪一帧，还应同步 SOF 和画面。
 
-<Sdk id="imx415-linear-readback" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:2883–2888`
+
+~~~c
+static void imx415_exposure_readback(struct imx415 *imx415)
+{
+	u32 shr, shr_l, shr_m, shr_h;
+	int ret = 0;
+
+	if (!imx415->is_tline_init) {
+~~~
 
 驱动的 gain control 直接传寄存器码，读回侧用 `gain * 300` 记录千分贝单位，每码按该 SDK 注释是 0.3 dB。例如分贝值和倍率转换要先弄清使用的域，不能把 control=4 直接写成放大 4 倍。实验中 4 倍是数学模型，实板输入应从寄存器范围、手册和取样结果换算。
 

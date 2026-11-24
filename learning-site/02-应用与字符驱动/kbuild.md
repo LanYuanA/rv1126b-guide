@@ -14,11 +14,29 @@ cat learning-site/examples/char/Kbuild
 
 本地基线选择 y。Makefile 的 obj-$(CONFIG_VIDEO_IMX415) 在本次展开为 obj-y。内建索引里的 .ko 后缀是模块名称的索引形式，看到这一行就知道为什么文件系统里可以找不到独立 imx415.ko。System.map 再提供最终链接有 probe 符号的证据。反过来，lsmod 只列已加载模块，无法枚举内建驱动。
 
-<Sdk id="imx415-kconfig" />
+源码摘录 `kernel-6.1/drivers/media/i2c/Kconfig:810–815`
+
+~~~text
+config VIDEO_IMX415
+	tristate "Sony IMX415 sensor support"
+	depends on I2C && VIDEO_DEV
+	depends on MEDIA_CAMERA_SUPPORT
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+~~~
 
 实际构建选择由输出目录的 .config 给出。Makefile 再把这个选择转换成对象是否参与构建。
 
-<Sdk id="imx415-kbuild" />
+源码摘录 `kernel-6.1/drivers/media/i2c/Makefile:106–111`
+
+~~~make
+obj-$(CONFIG_VIDEO_IMX415) += imx415.o
+obj-$(CONFIG_VIDEO_IMX464) += imx464.o
+obj-$(CONFIG_VIDEO_IMX492) += imx492.o
+obj-$(CONFIG_VIDEO_IMX498) += imx498.o
+obj-$(CONFIG_VIDEO_IMX577) += imx577.o
+obj-$(CONFIG_VIDEO_IMX582) += imx582.o
+~~~
 
 ### 用同一份配置编译独立模块
 
@@ -56,11 +74,29 @@ rg '[[:space:]]misc_(register|deregister)[[:space:]]' "$base/Module.symvers"
 
 `kernel.release` 给出构建树的发布字符串。`scripts/mod/modpost.c` 生成的模块元数据引用 `VERMAGIC_STRING`，其中包含发布字符串和若干构建特征。`misc_register`、`misc_deregister` 在模块的符号表中是 `UND`，表示由内核解析。`Module.symvers` 中可查到相应导出记录。当启用 `CONFIG_MODVERSIONS` 时，还要核对符号版本。即使实际板端的 `uname -r` 与构建树相同，也只完成了发布字符串这一项核对。
 
-<Sdk id="module-vermagic" />
+源码摘录 `kernel-6.1/include/linux/vermagic.h:42–47`
+
+~~~c
+#define VERMAGIC_STRING 						\
+	UTS_RELEASE " "							\
+	MODULE_VERMAGIC_SMP MODULE_VERMAGIC_PREEMPT 			\
+	MODULE_VERMAGIC_MODULE_UNLOAD MODULE_VERMAGIC_MODVERSIONS	\
+	MODULE_ARCH_VERMAGIC						\
+	MODULE_RANDSTRUCT
+~~~
 
 这里定义版本信息由哪些标志组成。modpost 再把该定义写进模块的生成文件。
 
-<Sdk id="modpost-vermagic" />
+源码摘录 `kernel-6.1/scripts/mod/modpost.c:1951–1956`
+
+~~~c
+buf_printf(b, "MODULE_INFO(vermagic, VERMAGIC_STRING);\n");
+buf_printf(b, "MODULE_INFO(name, KBUILD_MODNAME);\n");
+buf_printf(b, "\n");
+buf_printf(b, "__visible struct module __this_module\n");
+buf_printf(b, "__section(\".gnu.linkonce.this_module\") = {\n");
+buf_printf(b, "\t.name = KBUILD_MODNAME,\n");
+~~~
 
 本次交叉构建得到 `vermagic=6.1.141 SMP mod_unload aarch64`，两条 `misc_*` 符号都能在 `Module.symvers` 中找到。目标板能否加载仍待在匹配的实验内核上验证。
 
@@ -77,11 +113,29 @@ rg '[[:space:]]misc_(register|deregister)[[:space:]]' "$base/Module.symvers"
 
 内建和模块的初始化入口都能写成 module_init。查看头文件的两边分支。内建时展开为 initcall，由内核启动过程调用。作为模块时则导出模块初始化入口，加载器完成加载准备后调用它。初始化成功通常只是把驱动登记给框架。匹配的设备是否出现，probe 是否成功，是另一组事件。退出函数用于模块卸载时反向撤销，能否卸载还受构建配置、模块引用与系统策略影响。
 
-<Sdk id="kbuild-module-entry" />
+源码摘录 `kernel-6.1/include/linux/module.h:87–92`
+
+~~~c
+#define module_init(x)	__initcall(x);
+
+/**
+ * module_exit() - driver exit entry point
+ * @x: function to be run when driver is removed
+ *
+~~~
 
 宏决定初始化入口如何导出。模块加载准备完成后，运行内核才会调用它。
 
-<Sdk id="kbuild-module-init-run" />
+源码摘录 `kernel-6.1/kernel/module/main.c:2454–2459`
+
+~~~c
+static noinline int do_init_module(struct module *mod)
+{
+	int ret = 0;
+	struct mod_initfree *freeinit;
+
+	freeinit = kmalloc(sizeof(*freeinit), GFP_KERNEL);
+~~~
 
 ## 外部模块为什么要借用同一构建树？
 
@@ -109,6 +163,15 @@ readelf -Ws "$lab/rvnote.ko" | rg 'UND.*misc_(register|deregister)'
 
 内核加载路径会比较版本信息。模块签名以及模块加载策略也可能在其他阶段阻止加载。不要为了定位一次失败去关闭这些检查。文中执行的是本地交叉编译和离线取证。
 
-<Sdk id="kbuild-module-check" />
+源码摘录 `kernel-6.1/kernel/module/main.c:1959–1964`
+
+~~~c
+static int check_modinfo(struct module *mod, struct load_info *info, int flags)
+{
+	const char *modmagic = get_modinfo(info, "vermagic");
+	int err;
+
+	if (flags & MODULE_INIT_IGNORE_VERMAGIC)
+~~~
 
 **本节复盘。** 如果对方说“lsmod 没有 imx415，说明没编进去”，先指出 lsmod 显示的对象集合，再给出内建索引和内核符号的对照。然后区分 `rvnote.ko` 成功生成、目标加载成功、设备节点可用和实际 read 回调运行这四件事。接下来从设备号和操作表解释节点怎么进入驱动。[2.5 字符设备号与 file_operations](char-fops.md)

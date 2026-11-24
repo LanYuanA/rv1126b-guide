@@ -76,7 +76,16 @@ if (unlikely(!new.inuse && n->nr_partial >= s->min_partial))
 
 接下来根据 slab 所在链表将它摘下，最终 discard_slab。若仍有活对象，或缓存按策略保留空 slab，释放只表现为能复用更多槽。这个片段对应慢路径，CPU 私有状态与调试配置还可能走其他路径。
 
-<Sdk id="slub-object-free" />
+源码摘录 `kernel-6.1/mm/slub.c:3592–3597`
+
+~~~c
+static __always_inline void do_slab_free(struct kmem_cache *s,
+				struct slab *slab, void *head, void *tail,
+				int cnt, unsigned long addr)
+{
+	void *tail_obj = tail ? : head;
+	struct kmem_cache_cpu *c;
+~~~
 
 ## GFP 约束来自哪里？
 

@@ -54,7 +54,16 @@ struct gpio_led_platform_data *pdata = dev_get_platdata(&pdev->dev);
 
 该驱动还有按固件描述读取 GPIO 的路径。增加一个接线不同的板型时，优先表达接线差异。常规点亮和熄灭仍是同一逻辑操作。
 
-<Sdk id="legacy-board-select" />
+源码摘录 `kernel-6.1/arch/arm/mach-orion5x/dns323-setup.c:620–625`
+
+~~~c
+case DNS323_REV_A1:
+	/* The 5181 power LED is active low and requires
+	 * DNS323_GPIO_LED_POWER1 to also be low.
+	 */
+	 dns323ab_leds[0].active_low = 1;
+	 gpio_request(DNS323_GPIO_LED_POWER1, "Power Led Enable");
+~~~
 
 ## I2C board_info 如何等到 adapter？
 
@@ -83,7 +92,16 @@ list_for_each_entry(devinfo, &__i2c_board_list, list) {
 
 创建 client 描述的是预期连接。实例化阶段不读取芯片 ID。若旧板没有器件响应，以适配器实际传输和芯片 probe 结果为准。
 
-<Sdk id="legacy-info-register" />
+源码摘录 `kernel-6.1/drivers/i2c/i2c-boardinfo.c:51–56`
+
+~~~c
+int i2c_register_board_info(int busnum, struct i2c_board_info const *info, unsigned len)
+{
+	int status;
+
+	down_write(&__i2c_board_lock);
+
+~~~
 
 ## 迁移到设备树时逐项对照
 

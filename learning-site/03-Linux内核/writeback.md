@@ -54,7 +54,16 @@ status = a_ops->write_end(file, mapping, pos, bytes, copied,
 
 这里的 offset 在该页内。write_end 根据实际拷贝量收尾，文件系统可更新脏状态等记账。必要时循环撤销未接受的迭代器进度。这里的 dcache 操作涉及 CPU 缓存维护，完成后仍要由文件系统写回到存储。
 
-<Sdk id="ext4-buffered-write" />
+源码摘录 `kernel-6.1/fs/ext4/file.c:270–275`
+
+~~~c
+static ssize_t ext4_buffered_write_iter(struct kiocb *iocb,
+					struct iov_iter *from)
+{
+	ssize_t ret;
+	struct inode *inode = file_inode(iocb->ki_filp);
+
+~~~
 
 `mm/filemap.c:3877`
 
@@ -101,7 +110,16 @@ if (ret == 0)
 
 先前 write 成功之后仍可能在同步报告写回失败。实验将同步失败视为失败，并保留是哪一次调用返回错误。介质需要正确实现其缓存与 flush 语义，恢复效果还需在目标环境验证。
 
-<Sdk id="ext4-file-sync" />
+源码摘录 `kernel-6.1/fs/ext4/fsync.c:129–134`
+
+~~~c
+int ext4_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
+{
+	int ret = 0, err;
+	bool needs_barrier = false;
+	struct inode *inode = file->f_mapping->host;
+	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
+~~~
 
 ## 录像分段怎么收尾和验收？
 

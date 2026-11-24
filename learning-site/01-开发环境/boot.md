@@ -30,19 +30,55 @@ rg -n 'Linux version|Machine model|Kernel command line|VFS: Mounted root|Run .+ 
 
 `head.S` 的 `primary_entry` 保存引导参数并建立早期执行环境，后续经 `__primary_switched` 进入 `start_kernel`。沿 `init/main.c` 读到 `kernel_init_freeable`，可找到等待初始化并在适用分支调用 `prepare_namespace` 的位置。最后回到 `kernel_init` 看怎样尝试执行 init。存在可用的 initramfs 入口时，根文件系统切换可以交给早期用户态处理。
 
-<Sdk id="arm64-entry" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/head.S:468–473`
+
+~~~asm
+	bl	start_kernel
+	ASM_BUG()
+SYM_FUNC_END(__primary_switched)
+
+/*
+ * end early head section, begin head code that is also used for
+~~~
 
 早期汇编准备好 C 环境后，执行转到 start_kernel。这个入口启动内核初始化。
 
-<Sdk id="start-kernel" />
+源码摘录 `kernel-6.1/init/main.c:939–944`
+
+~~~c
+asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
+{
+	char *command_line;
+	char *after_dashes;
+
+	set_task_stack_end_magic(&init_task);
+~~~
 
 基本初始化之后，还要决定启动早期用户空间或由内核准备根文件系统。下面找进入挂根路径的条件。
 
-<Sdk id="prepare-root" />
+源码摘录 `kernel-6.1/init/main.c:1851–1856`
+
+~~~c
+	prepare_namespace();
+}
+
+/*
+ * Ok, we have completed the initial bootup, and
+ * we're essentially up and running. Get rid of the
+~~~
 
 挂根提供了可执行文件所在的目录。再跟到 kernel_init 中尝试执行用户 init 的位置。
 
-<Sdk id="kernel-init" />
+源码摘录 `kernel-6.1/init/main.c:1748–1753`
+
+~~~c
+	ret = run_init_process(ramdisk_execute_command);
+	if (!ret)
+		return 0;
+	pr_err("Failed to execute %s (error %d)\n",
+	       ramdisk_execute_command, ret);
+}
+~~~
 
 **复盘。** 只拿到 `Linux version` 和 `Machine model` 时，能确认当前板子使用的是你刚编译的 DTB 吗？这两条只给内核版本字符串与活动树中的板型。进一步应对照引导日志中的所选配置与活动树里的具体节点、属性，再结合构建产物记录。内核和设备树可以分别更新。[内核构建与产物](build.md)
 
@@ -67,11 +103,26 @@ rg -n 'root_dev_setup|rootwait_setup|prepare_namespace[(]'   "$sdk/kernel-6.1/in
 rg -n 'mmcblk0:|EXT4-fs [(]mmcblk0p6[)]|VFS: Mounted root|Run /sbin/init as init process'   output/camera-check/dmesg-before.log
 ~~~
 
-<Sdk id="sdk-multi-dtb" />
+流程示例（自写），对照位置 `device/rockchip/common/scripts/mk-kernel.sh:88–93`
+
+~~~bash
+read -r -a candidates <<< "$RK_KERNEL_MULTI_DTS"
+(( ${#candidates[@]} > 0 )) || exit 1
+# 每个候选项后续分别用于生成对应 DTB。
+~~~
 
 打包脚本准备候选物。启动时只有被传给内核的那份树会到 FDT 校验入口。
 
-<Sdk id="board-boot-dt-verify" />
+源码摘录 `kernel-6.1/drivers/of/fdt.c:1271–1276`
+
+~~~c
+bool __init early_init_dt_verify(void *params)
+{
+	if (!params)
+		return false;
+
+	/* check device tree validity */
+~~~
 
 本次日志先枚举 mmcblk0 及 p1 到 p8，再看到 ext4 从 mmcblk0p6 恢复和挂载。随后 VFS 打印设备号 179:6。将分区枚举、文件系统类型和设备号连起来，能解释当次根文件系统来自哪一层。日志中的 root=PARTUUID 选择分区身份，rootfstype 指明文件系统类型，rootwait 则表示等待根设备出现。rootwait 可让内核等待较慢的存储枚举，不能解决错误的分区标识或节点始终未出现的问题。
 
@@ -79,15 +130,42 @@ rg -n 'mmcblk0:|EXT4-fs [(]mmcblk0p6[)]|VFS: Mounted root|Run /sbin/init as init
 
 跟读 rest_init。这里创建运行 kernel_init 的首个用户模式任务，再启动 kthreadd。进入 kernel_init 后，仍要等待初始化并决定走早期用户空间还是内核挂根路径。如果 ramdisk 的 init 可用，会优先尝试它，后续根切换可由早期用户空间完成。否则在相应分支调用 prepare_namespace 寻找并挂载根。读挂根代码时将“分区已出现”和“文件系统已成功挂载”标为两条证据，前者只证明块层已经识别设备。
 
-<Sdk id="board-create-pid-one" />
+源码摘录 `kernel-6.1/init/main.c:687–692`
+
+~~~c
+noinline void __ref rest_init(void)
+{
+	struct task_struct *tsk;
+	int pid;
+
+	rcu_scheduler_starting();
+~~~
 
 创建首个用户模式任务只是开始。该任务还要在适用分支准备根文件系统。
 
-<Sdk id="board-mount-namespace" />
+源码摘录 `kernel-6.1/init/do_mounts.c:600–605`
+
+~~~c
+void __init prepare_namespace(void)
+{
+	if (root_delay) {
+		printk(KERN_INFO "Waiting %d sec before mounting root device...\n",
+		       root_delay);
+		ssleep(root_delay);
+~~~
 
 挂根完成提供了路径查找环境。下一步才尝试执行 init。
 
-<Sdk id="kernel-init" />
+源码摘录 `kernel-6.1/init/main.c:1748–1753`
+
+~~~c
+	ret = run_init_process(ramdisk_execute_command);
+	if (!ret)
+		return 0;
+	pr_err("Failed to execute %s (error %d)\n",
+	       ramdisk_execute_command, ret);
+}
+~~~
 
 找到 do_mounts.c 里的 prepare_namespace，检查驱动初始化等待、根设备选择和挂载的先后。再读 kernel_init 中依次尝试执行 init 的分支。执行成功后，任务仍是 PID 1，但已运行用户程序。历史日志的 Run /sbin/init as init process 在执行尝试前打印。若看到此行之后出现错误，应核对该路径的可执行模式、目标架构、脚本解释器或 ELF 解释器。若日志已经到服务启动，再去找 PID 1 管理的相应进程和该服务自己的失败记录。
 

@@ -36,8 +36,26 @@ isp3_param_write(params_vdev,
 
 两个字段同寄存器不表示红蓝增益相同。设备上分析重调的先后要同时保存统计窗口/参数、AWB 增益输出、统计帧号和 ISP 应用的参数号。 [7.4 RKAIQ 统计与参数路径](./rkaiq-control.md)
 
-<Sdk id="rkaiq-awb-handler" />
-<Sdk id="isp35-awb-gain" />
+源码摘录 `external/camera_engine_rkaiq/rkaiq/aiq_core_c/algo_handlers/RkAiqAwbHandler.c:172–177`
+
+~~~c
+aiq_params_base_t* pGainBase = shared->fullParams->pParamsArray[RESULT_TYPE_AWBGAIN_PARAM];
+if (pGainBase)
+	awb_proc_res_int->awb_gain_algo = (rk_aiq_isp_awb_gain_params_t*)pGainBase->_data;
+else
+	awb_proc_res_int->awb_gain_algo = NULL;
+
+~~~
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/isp_params_v35.c:729–734`
+
+~~~c
+isp3_param_write(params_vdev,
+		 ISP_PACK_2SHORT(arg->gain0_blue, arg->gain0_red),
+		 ISP3X_ISP_AWB_GAIN0_RB, id);
+
+isp3_param_write(params_vdev,
+		 ISP_PACK_2SHORT(arg->gain1_green_b, arg->gain1_green_r),
+~~~
 
 ## 宿主模型比较单光、混合光与误判
 

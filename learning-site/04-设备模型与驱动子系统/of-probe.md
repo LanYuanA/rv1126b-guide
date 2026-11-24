@@ -47,7 +47,16 @@ if (i2c_of_match_device(drv->of_match_table, client))
 
 返回 1 说明这个已登记驱动可尝试初始化当前 client。这个条件不发 I2C 消息。若运行环境没有设备或驱动，或绑定表不匹配，要先在固件、创建与注册的证据里定位。
 
-<Sdk id="imx415-driver" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3366–3371`
+
+~~~c
+static const struct of_device_id imx415_of_match[] = {
+	{ .compatible = "sony,imx415" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, imx415_of_match);
+#endif
+~~~
 
 ## 谁决定等待供应者，谁能丢失错误码？
 
@@ -85,7 +94,16 @@ if (IS_ERR(imx415->xvclk)) {
 
 同一驱动获取 regulator 的失败分支原样返回 ret。还可遇到 GPIO 的警告后继续等路径。分析时先查看失败分支究竟退出、继续，还是跳到回退标签。本轮只核对行为，未修改 SDK。
 
-<Sdk id="sensor-probe-resources" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3238–3243`
+
+~~~c
+imx415->xvclk = devm_clk_get(dev, "xvclk");
+if (IS_ERR(imx415->xvclk)) {
+	dev_err(dev, "Failed to get xvclk\n");
+	return -EINVAL;
+}
+
+~~~
 
 ## 读 ID、失败回退与 remove 各在哪一层？
 
@@ -112,7 +130,16 @@ if (id != CHIP_ID) {
 
 后续异步子设备注册还可能失败。错误的清理从已经完成的初始化阶段逆序执行。比如注册失败从 err_clean_entity 开始，随后关闭电源、释放控制项并销毁互斥锁。返回成功的实例在解绑时走 remove，它先撤销已经发布的子设备，然后走实体、控制和运行 PM 等清理。
 
-<Sdk id="sensor-probe-cleanup" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3319–3324`
+
+~~~c
+ret = v4l2_async_register_subdev_sensor(sd);
+if (ret) {
+	dev_err(dev, "v4l2 async register subdev failed\n");
+	goto err_clean_entity;
+}
+
+~~~
 
 ## 只凭现场现象，下一步分别查什么？
 

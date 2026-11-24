@@ -66,7 +66,16 @@ return rstc->rcdev->ops->deassert(rstc->rcdev, rstc->id);
 
 这里分派到具体控制器。有些硬件通过单次 reset 产生自动释放的脉冲，要看 provider 实现。对共享的 assert/deassert 用法，框架按 deassert_count 管理使用。一个消费者归还时，其他消费者仍需要解除复位，就不会立即拉回复位。独占句柄则遵循对应的取得和操作约定。
 
-<Sdk id="reset-framework" />
+源码摘录 `kernel-6.1/drivers/reset/core.c:530–535`
+
+~~~c
+int reset_control_deassert(struct reset_control *rstc)
+{
+	if (!rstc)
+		return 0;
+
+	if (WARN_ON(IS_ERR(rstc)))
+~~~
 
 ## 板外 XCLR 如何随 GPIO 改变？
 
@@ -85,7 +94,16 @@ if (!IS_ERR(imx415->reset_gpio))
 
 普通上电请求逻辑 0，按本候选的 active-low 属性推导 SoC pad 为高、释放请求。实际模组 XCLR 要继续核对线间反相、移位和供电。正常断电先用逻辑 1 请求复位，再关闭时钟等资源，较细顺序见[供电时序](regulator.md)。
 
-<Sdk id="sensor-power-down" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:2668–2673`
+
+~~~c
+{
+	int ret;
+	struct device *dev = &imx415->client->dev;
+
+	if (imx415->is_thunderboot) {
+		if (imx415->is_first_streamoff) {
+~~~
 
 ## 首次 I2C NACK 怎样缩小原因？
 

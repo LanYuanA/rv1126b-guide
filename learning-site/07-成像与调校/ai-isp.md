@@ -29,8 +29,26 @@ obj->ops_.aiisp_proc = (rkaiq_aiisp_proc)dlsym(obj->handle_, "rk_aiisp_proc");
 
 加载成功只拿到函数地址。之后仍要确认初始化按当前 sensor 模式通过，并在循环里将匹配的缓冲交给实际后处理。运行态证明可由执行计数、帧号、输入和输出时间，以及故障或降级记录构成。不需以程序名是否包含 AI 代替验证。
 
-<Sdk id="aiisp-library-loader" />
-<Sdk id="aiisp-queue-command" />
+源码摘录 `external/camera_engine_rkaiq/rkaiq/hwi_c/aiq_aiIspLoader.c:46–51`
+
+~~~c
+char* error;
+
+obj->ops_.aiisp_init = (rkaiq_aiisp_init)dlsym(obj->handle_, "rk_aiisp_init");
+error                = dlerror();
+if (error != NULL) {
+    LOGE_CAMHW_SUBM(ISP20HW_SUBM, "Failed to resolve symbol rk_aiisp_init error: %s", error);
+~~~
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/aiisp/aiisp.c:1942–1947`
+
+~~~c
+case RKAIISP_CMD_INIT_BUFPOOL:
+	ret = rkaiisp_init_pool(aidev, arg);
+	break;
+case RKAIISP_CMD_FREE_BUFPOOL:
+	ret = rkaiisp_free_pool(aidev);
+	break;
+~~~
 
 ## 输入格式与物理内存为什么要重新核对
 
@@ -50,8 +68,26 @@ size = stride * h;
 
 未对齐的 3840×2160 每像素 2 字节容器，单缓冲约 16.59 MB，三块约 49.77 MB（47.46 MiB）。如果 30 fps 下确实完整读写一次，每秒有效数据约 995.33 MB。实际池大小要用分配返回、对齐、是否绕过内存和各中间面计算。DMA-BUF fd 只是句柄，源、加速器和 ISP 间还要处理生命周期、同步与导入可见性。 [3.15 DMA-BUF 导出、导入与同步](../03-Linux内核/dmabuf.md)
 
-<Sdk id="aiisp-mode-raw-contract" />
-<Sdk id="isp35-aiisp-allocation" />
+源码摘录 `external/camera_engine_rkaiq/rkaiq/hwi_c/aiq_CamHwBase.c:7561–7566`
+
+~~~c
+rk_aiq_exposure_sensor_descriptor sensor_des;
+AiqCamHw_getSensorModeData(pCamHw, pCamHw->sns_name, &sensor_des);
+pCamHw->aiisp_param->rawHgt    = sensor_des.isp_acq_height;
+pCamHw->aiisp_param->rawWid    = sensor_des.isp_acq_width;
+pCamHw->aiisp_param->rawHgtStd = pCamHw->aiisp_param->rawHgt;
+pCamHw->aiisp_param->rawWidStd = pCamHw->aiisp_param->rawWid;
+~~~
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/isp_params_v35.c:5887–5892`
+
+~~~c
+stride = w32 * 2;
+size = stride * h;
+cnt = bnrbuf->u.v35.aiisp.buf_cnt;
+if (cnt >= RKISP_BUFFER_MAX)
+	cnt = RKISP_BUFFER_MAX - 1;
+for (i = 0; i < cnt && iir_size; i++) {
+~~~
 
 ## 宿主复现对照并保留证据
 

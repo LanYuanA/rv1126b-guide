@@ -58,7 +58,16 @@ return page_pfn ^ (1 << order);
 
 这一位取反得到同阶伙伴。对 2～3 的 order 1 块，2 异或 2 得到 0，伙伴为 0～1。两个地址相邻的块可能跨对齐边界，例如 2～3 和 4～5。源码还会检查伙伴状态、阶数、zone，并在适用时检查迁移类型，满足条件后才从空闲链表摘除并加阶。
 
-<Sdk id="buddy-smallest" />
+源码摘录 `kernel-6.1/mm/page_alloc.c:2604–2609`
+
+~~~c
+struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
+						int migratetype)
+{
+	unsigned int current_order;
+	struct free_area *area;
+	struct page *page;
+~~~
 
 ## 读宿主快照，再判断能排除什么
 
@@ -92,7 +101,16 @@ mutex_unlock(&cma_mutex);
 
 成功后从起点取得页对象。失败会清除本次位图占用，普通流程遇到 EBUSY 时可换候选位置。若区域内有无法搬走的页，单看空闲汇总不足以找到匹配区间。这里的 count 可以是非二的幂。CMA 可完成的请求和普通伙伴分配能交付的最大 order 是两类约束。
 
-<Sdk id="cma-allocate" />
+源码摘录 `kernel-6.1/mm/cma.c:441–446`
+
+~~~c
+struct page *cma_alloc(struct cma *cma, unsigned long count,
+		       unsigned int align, bool no_warn)
+{
+	unsigned long mask, offset;
+	unsigned long pfn = -1;
+	unsigned long start = 0;
+~~~
 
 ## 一张 4K 帧怎样从推算走到实际诊断？
 
@@ -113,7 +131,16 @@ if (ret)
 
 前者请求连续物理页，另一分支根据约束准备页集合。两支成功后还要建 SG 表，并调用 dma_map_sgtable 建立设备可访问的映射。即使获得了页，DMA mask、段长或连续设备地址要求也可能让映射失败。先记录 REQBUFS 的原始返回值，再结合实参和同一窗口日志区分页申请、SG 表与 DMA 映射。若观察到 DMA 映射阶段失败，就能把调查从“根本没申请到页”缩到设备映射契约。本轮核对源码与宿主快照，板端路径还需实测。
 
-<Sdk id="isp-buffer-allocator" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/hw.c:1507–1512`
+
+~~~c
+ret = of_reserved_mem_device_init(dev);
+if (ret) {
+	is_mem_reserved = false;
+	if (!hw_dev->is_mmu)
+		dev_info(dev, "No reserved memory region. default cma area!\n");
+}
+~~~
 
 ## 本节复盘
 

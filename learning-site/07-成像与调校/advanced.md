@@ -34,9 +34,36 @@ input_win = rkisp_get_isp_sd_win(&dev->isp_sdev);
 
 V35 的帧路径在指定阶段消化 `is_crop_upd`。现场要测申请帧和生效帧。Rockit 另外有 VI SetEptz 与 VPSS SetChnCrop 等接口，先在管线标注裁切位于共享源还是在分支后。若只希望预览跟随而录像保留全景，选择独立预览通道的裁切路径。共用 ISP 主图上的裁切会影响后续消费者。
 
-<Sdk id="rkisp-video-selection" />
-<Sdk id="rkisp-v35-crop-update" />
-<Sdk id="rockit-vpss-crop" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/capture.c:1722–1727`
+
+~~~c
+static int rkisp_s_selection(struct file *file, void *prv,
+			      struct v4l2_selection *sel)
+{
+	struct rkisp_stream *stream = video_drvdata(file);
+	struct rkisp_device *dev = stream->ispdev;
+	struct v4l2_rect *dcrop = &stream->dcrop;
+~~~
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/capture_v35.c:999–1004`
+
+~~~c
+if (!irq && stream->is_crop_upd) {
+	rkisp_stream_config_dcrop(stream, false);
+	rkisp_stream_config_rsz(stream, false);
+	stream->is_crop_upd = false;
+}
+if (!list_empty(&stream->buf_queue) &&
+~~~
+源码摘录 `external/rockit/mpi/sdk/include/rk_mpi_vpss.h:66–71`
+
+~~~c
+RK_S32 RK_MPI_VPSS_SetChnCrop(VPSS_GRP VpssGrp, VPSS_CHN VpssChn, const VPSS_CROP_INFO_S *pstCropInfo);
+RK_S32 RK_MPI_VPSS_GetChnCrop(VPSS_GRP VpssGrp, VPSS_CHN VpssChn, VPSS_CROP_INFO_S *pstCropInfo);
+
+RK_S32 RK_MPI_VPSS_SetChnRotation(VPSS_GRP VpssGrp, VPSS_CHN VpssChn, ROTATION_E enRotation);
+RK_S32 RK_MPI_VPSS_GetChnRotation(VPSS_GRP VpssGrp, VPSS_CHN VpssChn, ROTATION_E *penRotation);
+
+~~~
 
 ## 同一跟踪输入，比较直接跟随与稳定策略
 

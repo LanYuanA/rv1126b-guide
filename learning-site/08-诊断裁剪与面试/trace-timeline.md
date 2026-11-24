@@ -27,9 +27,36 @@ trace_vb2_buf_done(q, vb);
 
 驱动若将缓冲返回到 QUEUED 状态，分支直接返回。在通知等待者的分支会调用 `wake_up(&q->done_wq)`。sched_wakeup 再用内核调度器的记录判断具体目标。缓冲标志、匹配键和是否确实有等待者都应验证。 [Linux tracepoint 事件格式](https://docs.kernel.org/6.1/trace/events.html)
 
-<Sdk id="trace-irq-fields" />
-<Sdk id="trace-sched-switch" />
-<Sdk id="trace-vb2-and-wakeup" />
+源码摘录 `kernel-6.1/include/trace/events/irq.h:53–58`
+
+~~~c
+TRACE_EVENT(irq_handler_entry,
+
+	TP_PROTO(int irq, struct irqaction *action),
+
+	TP_ARGS(irq, action),
+
+~~~
+源码摘录 `kernel-6.1/include/trace/events/sched.h:222–227`
+
+~~~c
+TRACE_EVENT(sched_switch,
+
+	TP_PROTO(bool preempt,
+		 struct task_struct *prev,
+		 struct task_struct *next,
+		 unsigned int prev_state),
+~~~
+源码摘录 `kernel-6.1/drivers/media/common/videobuf2/videobuf2-core.c:1105–1110`
+
+~~~c
+trace_vb2_buf_done(q, vb);
+
+switch (state) {
+case VB2_BUF_STATE_QUEUED:
+	return;
+default:
+~~~
 
 ## 跨 CPU 时间为什么不能直接相减
 

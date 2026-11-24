@@ -20,11 +20,29 @@ import exampleFile from '../examples/task_resources_demo.c?url'
 
 打开 SDK 的 copy_files 和 copy_mm。先看是否设置 CLONE_FILES：设置时增加同一 files_struct 的引用，否则复制 fd 表，复制出的条目仍可引用原来的 struct file。CLONE_VM 控制是否共享 mm。普通 fork 后父子有各自的地址空间，私有可写页常用写时复制实现。已有的 pipe 是内核里的同一个对象，两张 fd 表都能引用它。
 
-<Sdk id="task-copy-files" />
+源码摘录 `kernel-6.1/kernel/fork.c:1620–1625`
+
+~~~c
+static int copy_files(unsigned long clone_flags, struct task_struct *tsk)
+{
+	struct files_struct *oldf, *newf;
+
+	/*
+	 * A background process may not have any files ...
+~~~
 
 文件表可以共享或复制。地址空间有自己的决定条件，不能从文件表推出来。
 
-<Sdk id="task-copy-mm" />
+源码摘录 `kernel-6.1/kernel/fork.c:1563–1568`
+
+~~~c
+static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
+{
+	struct mm_struct *mm, *oldmm;
+
+	tsk->min_flt = tsk->maj_flt = 0;
+	tsk->nvcsw = tsk->nivcsw = 0;
+~~~
 
 在此前的 WSL 对照中，父进程创建 pipe 后 fork，子进程写一个字节并退出。父进程在 waitpid 成功后才继续观察，这样能排除“子进程还没跑到 close”这个干扰。读端设置非阻塞，空读和 poll 都有明确的结束条件。
 
@@ -43,15 +61,42 @@ import exampleFile from '../examples/task_resources_demo.c?url'
 
 fork 通过内核的任务创建入口构造新任务，具体哪些资源复制、哪些共享，要看构建 copy_process 的 clone 标志。普通 fork 产生新线程组并单独复制 fd 表；fork 之后的表项仍能引用同一打开对象。POSIX 线程由用户态库采用相应 clone 标志建立，同组任务共享进程级资源，仍各自有任务身份与运行状态。TID 的数值来自可见的 PID 命名空间，跨容器核对事件时先确认观察口径。
 
-<Sdk id="task-kernel-clone" />
+源码摘录 `kernel-6.1/kernel/fork.c:2716–2721`
+
+~~~c
+pid_t kernel_clone(struct kernel_clone_args *args)
+{
+	u64 clone_flags = args->flags;
+	struct completion vfork;
+	struct pid *pid;
+	struct task_struct *p;
+~~~
 
 exec 成功时用新程序映像替换旧执行环境。同一个进程身份继续存在，地址空间替换，带 FD_CLOEXEC 的描述符关闭。普通子进程随后 exit 时释放自己的文件引用，wait 则负责读取退出状态。僵尸保留退出信息供回收。应用排查时，如果已经知道子进程退出，仍需检查父进程或其他引用者是不是留着写端。
 
-<Sdk id="task-exec-mm" />
+源码摘录 `kernel-6.1/fs/exec.c:983–988`
+
+~~~c
+static int exec_mmap(struct mm_struct *mm)
+{
+	struct task_struct *tsk;
+	struct mm_struct *old_mm, *active_mm;
+	int ret;
+
+~~~
 
 进程替换映像后仍需管理退出。查看对子进程退出信息的处理，区别等待者已经观察到退出和正式回收这两个时刻。
 
-<Sdk id="task-wait-zombie" />
+源码摘录 `kernel-6.1/kernel/exit.c:1096–1101`
+
+~~~c
+static int wait_task_zombie(struct wait_opts *wo, struct task_struct *p)
+{
+	int state, status;
+	pid_t pid = task_pid_vnr(p);
+	uid_t uid = from_kuid_munged(current_user_ns(), task_uid(p));
+	struct waitid_info *infop;
+~~~
 
 ## 实测两种“共享”的差别
 
@@ -87,15 +132,42 @@ cc -std=c11 -Wall -Wextra -Werror -pthread learning-site/examples/task_resources
 
 ### 用两个调度事件配出哪一段时间？
 
-<Sdk id="scheduler-wakeup" />
+源码摘录 `kernel-6.1/kernel/sched/core.c:4086–4091`
+
+~~~c
+try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
+{
+	unsigned long flags;
+	int cpu, success = 0;
+
+	preempt_disable();
+~~~
 
 唤醒只改变任务的可运行机会。公平调度按运行时间和权重记账。
 
-<Sdk id="sched-fair-runtime" />
+源码摘录 `kernel-6.1/kernel/sched/fair.c:882–887`
+
+~~~c
+static void update_curr(struct cfs_rq *cfs_rq)
+{
+	struct sched_entity *curr = cfs_rq->curr;
+	u64 now = rq_clock_task(rq_of(cfs_rq));
+	u64 delta_exec;
+
+~~~
 
 更新运行时间后，选择路径还须根据队列中的候选决定下一位。
 
-<Sdk id="sched-fair-pick" />
+源码摘录 `kernel-6.1/kernel/sched/fair.c:7793–7798`
+
+~~~c
+pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
+{
+	struct cfs_rq *cfs_rq = &rq->cfs;
+	struct sched_entity *se;
+	struct task_struct *p;
+	int new_tasks;
+~~~
 
 在 try_to_wake_up 中找任务状态检查和目标 CPU 的选择。任务可以进入某个 CPU 的运行队列，也可在迁移后到另一个 CPU 执行。源码里的 TASK_RUNNING 涵盖就绪和正在运行两种情况；只看 /proc 的瞬时 R 无法分出其间的等待。再看普通调度类 update_curr：把当前实体实际运行增量按权重换算，累加到 vruntime；pick_next_task_fair 从可运行实体中选择。权重影响竞争 CPU 的份额。组调度、亲和性、更高优先级调度类都会影响某个线程下一次何时运行。
 
@@ -123,16 +195,43 @@ cc -std=c11 -Wall -Wextra -Werror -pthread learning-site/examples/task_resources
 
 超时行通常在 20 ms 左右，调度或系统负载可使返回变晚。后两行应分别打印 `b'OK'` 和 EOF。`poll(0)` 是立即查询，空的事件列表表示没有就绪 fd。`POLLIN` 与 `POLLHUP` 是可组合的位，使用相等比较会漏掉同时成立的情况。
 
-<Sdk id="pipe-poll" />
+源码摘录 `kernel-6.1/fs/pipe.c:654–659`
+
+~~~c
+pipe_poll(struct file *filp, poll_table *wait)
+{
+	__poll_t mask;
+	struct pipe_inode_info *pipe = filp->private_data;
+	unsigned int head, tail;
+
+~~~
 
 对象返回当前就绪位并登记等待。poll 的通用循环决定空结果时是否等待和重查。
 
-<Sdk id="poll-loop" />
+源码摘录 `kernel-6.1/fs/select.c:882–887`
+
+~~~c
+static int do_poll(struct poll_list *list, struct poll_wqueues *wait,
+		   struct timespec64 *end_time)
+{
+	poll_table* pt = &wait->pt;
+	ktime_t expire, *to = NULL;
+	int timed_out = 0, count = 0;
+~~~
 
 阅读 `pipe_poll` 时，先找 `poll_wait` 对读写队列的登记，再找数据与 writer 数量怎样形成 mask。到 `do_poll` 看扫描结果为空时何时等待，以及唤醒后怎样重新扫描。应用观测到的区间包含从睡眠到再次获得 CPU 的时间。要测调度等待，需要把目标线程的唤醒事件与真正切入的事件配对。
 
 换到相机，VB2 的可完成条件包括完成列表有缓冲，也关注停止流与队列错误。读 `__vb2_wait_for_done_vb` 时圈出三步。先在阻塞前检查状态，空且非阻塞时返回 `-EAGAIN`。阻塞路径经 `wait_prepare` 做等待前准备，再等 `done_wq` 的条件。醒来后经 `wait_finish` 恢复并重新检查。若驱动使用这些回调释放和重新获取队列锁，可继续跟读驱动所填的函数。pipe 结束标志和相机停止流各有自己的判断规则。
 
-<Sdk id="vb2-wait-done" />
+源码摘录 `kernel-6.1/drivers/media/common/videobuf2/videobuf2-core.c:1811–1816`
+
+~~~c
+static int __vb2_wait_for_done_vb(struct vb2_queue *q, int nonblocking)
+{
+	/*
+	 * All operations on vb_done_list are performed under done_lock
+	 * spinlock protection. However, buffers may be removed from
+	 * it and returned to userspace only while holding both driver's
+~~~
 
 **排错。** 应用报告等了 60 ms 时，先记下是 `poll` 超时、`DQBUF` 报错，还是已成功取帧但间隔拉长。若同时有缓冲完成和线程切入的时间戳，就能分别计算硬件到缓冲完成、唤醒到切入的区间。需要保证时间戳口径一致，再与帧序号对照。[中断和缓冲完成](interrupts.md)

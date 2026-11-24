@@ -25,7 +25,16 @@ case 1:			/* PPI */
 
 设备树中断说明符先转为控制器编号。驱动最终取得的是经过映射的 Linux IRQ。
 
-<Sdk id="rk-i2c-irq-register" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:2002–2007`
+
+~~~c
+irq = platform_get_irq(pdev, 0);
+if (irq < 0)
+	return irq;
+i2c->irq = irq;
+
+if (IS_ENABLED(CONFIG_ROCKCHIP_THUNDER_BOOT_SERVICE) &&
+~~~
 
 ~~~text
 控制器 REG_IPD 置位 → 中断线有效 → GIC 将请求送到目标 CPU
@@ -36,11 +45,29 @@ case 1:			/* PPI */
 
 读源码时把最后一行拆开。GIC 应答、优先级下降及 deactivate 的具体次序取决于该 irqchip 的工作模式。外设自己的 pending 位则由驱动按寄存器语义处理。只结束 GIC 侧的处理，外设若仍把电平拉高，就可能再次进中断。查看 rk3x 的停止状态分支，找到对 REG_IPD 写入 REG_INT_STOP 和结束传输、通知等待者的动作。[I2C 控制器中断分支](../04-设备模型与驱动子系统/i2c-irq.md)
 
-<Sdk id="irq" />
+源码摘录 `kernel-6.1/drivers/irqchip/irq-gic.c:370–375`
+
+~~~c
+static void __exception_irq_entry gic_handle_irq(struct pt_regs *regs)
+{
+	u32 irqstat, irqnr;
+	struct gic_chip_data *gic = &gic_data[0];
+	void __iomem *cpu_base = gic_data_cpu_base(gic);
+
+~~~
 
 控制器分派到通用 IRQ 后，已注册的设备回调才读取外设状态位。
 
-<Sdk id="rk-i2c-irq" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:918–923`
+
+~~~c
+static irqreturn_t rk3x_i2c_irq(int irqno, void *dev_id)
+{
+	struct rk3x_i2c *i2c = dev_id;
+	unsigned int ipd;
+
+	spin_lock(&i2c->lock);
+~~~
 
 SPI 名称中的 shared 指这种外设中断可路由到 CPU。Linux 多设备共享同一 IRQ 则需要注册者协商 IRQF_SHARED、提供可区分的 dev_id，并通过设备状态判断事件是否属于自己。本例注册参数 flags 为 0。若驱动采用 request_threaded_irq，主处理函数可快速确认来源并返回 IRQ_WAKE_THREAD，把可睡眠的工作交给线程函数。
 
@@ -50,7 +77,16 @@ SPI 名称中的 shared 指这种外设中断可路由到 CPU。Linux 多设备�
 
 AArch64 将当前异常级和来源用于选择向量。前文的 SVC 走 EL0 同步入口；假如同一个线程正在 EL0 时收到 IRQ，CPU 走异步 IRQ 入口。若被打断的是内核代码，入口路径也有对应的 EL1 分支。这里先看 64 位 EL0 的 IRQ 入口如何把保存的现场传到架构中断处理链。
 
-<Sdk id="arm64-el0-irq-entry" />
+源码摘录 `kernel-6.1/arch/arm64/kernel/entry-common.c:722–727`
+
+~~~c
+static void noinstr __el0_irq_handler_common(struct pt_regs *regs)
+{
+	el0_interrupt(regs, handle_arch_irq);
+}
+
+asmlinkage void noinstr el0t_64_irq_handler(struct pt_regs *regs)
+~~~
 
 handler 是架构登记的中断处理函数。GIC 的处理函数再去 CPU interface 读应答寄存器，从读回值提取 INTID。Distributor 一侧组织中断源的路由、优先级和使能等设置，CPU interface 一侧把可服务的中断呈交 CPU。这样 CPU 取得的是控制器的硬件编号。
 
@@ -58,7 +94,20 @@ handler 是架构登记的中断处理函数。GIC 的处理函数再去 CPU int
 
 GIC 的 domain 不只用来在注册时翻译 DTS。运行时 generic_handle_domain_irq 也根据“domain 加硬件编号”找对应描述符。irq_desc 保存通用状态、IRQ chip 操作、流程函数和已注册的 action。GIC 为普通外设中断设置 fast EOI 类型的流程函数，下面看本版通用处理的顺序。
 
-<Sdk id="irq-fasteoi-flow" :start="704" :lines="10" />
+源码摘录 `kernel-6.1/kernel/irq/chip.c:704–713`
+
+~~~c
+if (unlikely(!desc->action || irqd_irq_disabled(&desc->irq_data))) {
+	desc->istate |= IRQS_PENDING;
+	mask_irq(desc);
+	goto out;
+}
+
+kstat_incr_irqs_this_cpu(desc);
+if (desc->istate & IRQS_ONESHOT)
+	mask_irq(desc);
+
+~~~
 
 如果描述符已禁用或没有 action，这一路会标记 pending 并屏蔽。正常分支累加当前 CPU 的计数，按条件执行屏蔽，然后交给已登记的 action。这里的统计时刻早于驱动返回，计数上涨只能说明 IRQ 流程曾进入计数分支。
 

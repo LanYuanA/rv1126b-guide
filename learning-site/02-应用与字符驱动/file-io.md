@@ -69,11 +69,29 @@ do {
 
 沿 `ksys_read` 找到 `fdget_pos`。查不到有效 fd 时可直接返回 −EBADF；找到打开文件后才进入 `vfs_read` 检查访问方式和用户缓冲，分派到操作表中的 read 或 read_iter。应用日志里的 EBADF 需要结合当次参数判断发生在获取对象还是访问方式检查。下面两个入口可逐步核对。
 
-<Sdk id="read-fd-lookup" />
+源码摘录 `kernel-6.1/fs/read_write.c:602–607`
+
+~~~c
+ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
+{
+	struct fd f = fdget_pos(fd);
+	ssize_t ret = -EBADF;
+
+	if (f.file) {
+~~~
 
 查到 file 后才有对象可读。下一段在 VFS 检查访问方向，再决定调用哪个读入口。
 
-<Sdk id="vfs-read-dispatch" />
+源码摘录 `kernel-6.1/fs/read_write.c:450–455`
+
+~~~c
+ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+{
+	ssize_t ret;
+
+	if (!(file->f_mode & FMODE_READ))
+		return -EBADF;
+~~~
 
 ## 本节复盘
 

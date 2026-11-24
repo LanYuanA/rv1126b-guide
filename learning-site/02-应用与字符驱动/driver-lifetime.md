@@ -17,7 +17,20 @@ B 探测到一半失败，A 仍有用户在读。应回收哪份资源？先找�
 
 IMX415 的普通 probe 利用标签共享回退路径。以下几行从媒体实体清理一路走到释放电源、controls 和 mutex。
 
-<Sdk id="sensor-probe-cleanup" :start="3331" :lines="10" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3331–3340`
+
+~~~c
+err_clean_entity:
+#if defined(CONFIG_MEDIA_CONTROLLER)
+	media_entity_cleanup(&sd->entity);
+#endif
+err_power_off:
+	__imx415_power_off(imx415);
+err_free_handler:
+	v4l2_ctrl_handler_free(&imx415->ctrl_handler);
+err_destroy_mutex:
+	mutex_destroy(&imx415->mutex);
+~~~
 
 读 ID 失败可直接跳到关电源。媒体实体已经初始化且注册失败时，才从实体清理入口开始。读每个 goto 时，先列出成功取得的资源，再标出尚未取得、无需清理的部分。
 
@@ -33,7 +46,16 @@ IMX415 的普通 probe 利用标签共享回退路径。以下几行从媒体实
 
 准备撤映射时看 cdev_del。它阻止该映射上的新打开，已经打开的 file 仍可能执行回调。引用计数能让对象内存继续存活，还需要明确的不可用状态阻止旧回调访问已拔除的硬件。等待异步任务结束前，也要确认没有握着该任务必须取得的锁。
 
-<Sdk id="cdev-delete-existing" />
+源码摘录 `kernel-6.1/fs/char_dev.c:590–595`
+
+~~~c
+ * NOTE: This guarantees that cdev device will no longer be able to be
+ * opened, however any cdevs already open will remain and their fops will
+ * still be callable even after cdev_del returns.
+ */
+void cdev_del(struct cdev *p)
+{
+~~~
 
 便笺的最后一次释放见 `examples/char/rvnote.c:59`。
 

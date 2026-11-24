@@ -32,11 +32,27 @@ tmp 已经完成用户数据复制。锁让读者看到内容、长度和游标�
 
 下面是管道将调用者登记到对应等待队列的位置。
 
-<Sdk id="pipe-poll" :start="669" :lines="4" />
+源码摘录 `kernel-6.1/fs/pipe.c:669–672`
+
+~~~c
+if (filp->f_mode & FMODE_READ)
+	poll_wait(filp, &pipe->rd_wait, wait);
+if (filp->f_mode & FMODE_WRITE)
+	poll_wait(filp, &pipe->wr_wait, wait);
+~~~
 
 filp 是这次打开，rd_wait 让写者可以通知读者。登记等待与检查就绪是两个动作，真正的可读位来自下面的状态判断。
 
-<Sdk id="pipe-poll" :start="683" :lines="6" />
+源码摘录 `kernel-6.1/fs/pipe.c:683–688`
+
+~~~c
+if (filp->f_mode & FMODE_READ) {
+	if (!pipe_empty(head, tail))
+		mask |= EPOLLIN | EPOLLRDNORM;
+	if (!pipe->writers && filp->f_version != pipe->w_counter)
+		mask |= EPOLLHUP;
+}
+~~~
 
 缓冲非空时可报告 POLLIN。poll 回来后，另一消费者仍可以提前取走数据。非阻塞 read 需处理新的 EAGAIN，也要区分“无写端且已读尽”的 EOF。非阻塞视频 DQBUF 同样要检查实际返回值。
 

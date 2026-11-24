@@ -44,7 +44,16 @@ CPU 写入 → TLB 或硬件页表遍历 → 翻译或权限产生同步异常
 
 匿名 mmap 成功意味着地址范围已建立。RSS 描述当前驻留的页，它随触页和回收而变化。一次 TLB miss 通常由硬件页表遍历解决。只有翻译失败、权限等条件触发异常，才由内核接手。
 
-<Sdk id="mm-mmap-range" />
+源码摘录 `kernel-6.1/mm/mmap.c:1252–1257`
+
+~~~c
+unsigned long do_mmap(struct file *file, unsigned long addr,
+			unsigned long len, unsigned long prot,
+			unsigned long flags, unsigned long pgoff,
+			unsigned long *populate, struct list_head *uf)
+{
+	struct mm_struct *mm = current->mm;
+~~~
 
 ## ARM64 怎么把访问信息交给通用内存管理？
 
@@ -69,7 +78,16 @@ return handle_mm_fault(vma, addr, mm_flags, regs);
 
 这也解释了两种看似相同的写保护异常。对只读 VMA 写入会在这里失败。若 VMA 允许写，但 fork 后当前 PTE 暂时只读，则继续到通用缺页处理，再决定如何实现私有写入。
 
-<Sdk id="arm64-page-fault" />
+源码摘录 `kernel-6.1/arch/arm64/mm/fault.c:486–491`
+
+~~~c
+static vm_fault_t __do_page_fault(struct mm_struct *mm,
+				  struct vm_area_struct *vma, unsigned long addr,
+				  unsigned int mm_flags, unsigned long vm_flags,
+				  struct pt_regs *regs)
+{
+	/*
+~~~
 
 ## 匿名首写、文件首触和写时复制怎么分流？
 
@@ -133,7 +151,16 @@ if (vmf->flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) {
 
 如果页仍被共享且需要复制，`wp_page_copy` 准备新页、复制内容，再更新写方的映射。若页已经独占且满足条件，则可走复用。共享映射的写入按共享协议可见。实验用 waitpid 固定先后顺序。实时读写共享数据还需另设同步点。
 
-<Sdk id="wp-copy" />
+源码摘录 `kernel-6.1/mm/memory.c:3130–3135`
+
+~~~c
+static vm_fault_t wp_page_copy(struct vm_fault *vmf)
+{
+	const bool unshare = vmf->flags & FAULT_FLAG_UNSHARE;
+	struct vm_area_struct *vma = vmf->vma;
+	struct mm_struct *mm = vma->vm_mm;
+	struct page *old_page = vmf->page;
+~~~
 
 ## V4L2 的 mmap 能直接照搬首触结论吗？
 

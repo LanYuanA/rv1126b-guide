@@ -23,7 +23,16 @@ import analysisFile from '../examples/frame-intervals.sh?url'
 
 本项目历史日志标出 `ts-monotonic, ts-src-eof`。这里读的是帧元数据里的时间戳。想测用户应用收到帧的时间，须在 DQBUF 前后额外打点。与 trace 关联时核对各事件的 clock 原点、暂停行为和偏移。V35 代码给 VB2 队列设置 `V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC`。 `TSTAMP_SRC_EOF` 可以是 flags 的零值，应按掩码解释，位置依赖相应驱动采样。用 `sequence/index` 和一致的窗口关联同一帧。
 
-<Sdk id="rkisp-v35-clock-flags" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/capture_v35.c:1737–1742`
+
+~~~c
+q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+q->lock = &stream->apilock;
+q->dev = stream->ispdev->hw_dev->dev;
+q->allow_cache_hints = 1;
+q->bidirectional = 1;
+if (stream->ispdev->hw_dev->is_dma_contig)
+~~~
 
 若有 n 次观测，在第一个与最后一个之间存在 n−1 个相邻间隔。观测速率用 `(n−1)/(t_last−t_first)`。从任意固定窗口数所有到达帧也能计算吞吐，但要把完整窗口当分母，不能混用。历史 31 次出队跨约 1 秒，按 n−1 得 30.000 fps，直接用 31 作同跨度分子会高估约 3.33%。
 

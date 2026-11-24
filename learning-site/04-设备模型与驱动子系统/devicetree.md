@@ -77,7 +77,16 @@ imx415_out0: endpoint {
 | `port/endpoint/remote-endpoint` | graph 描述本端口和远端端点，接收端异步匹配使用固件节点关系 | 沿两端引用检查互指、端口编号和最终 media link |
 | `data-lanes` | V4L2 fwnode parser 填到 `bus_cfg.bus.mipi_csi2`。数值是物理 lane 的索引序列 | 驱动依据数量选择模式表。顺序还需匹配模组和接收器，四个数不能证明信号完整性 |
 
-<Sdk id="board-dts" />
+源码摘录 `kernel-6.1/arch/arm64/boot/dts/rockchip/rv1126b-alientek.dtsi:489–494`
+
+~~~text
+&i2c3 {
+	status = "okay";
+	pinctrl-0 = <&i2c3m1_pins>;
+
+	imx415_0: imx415_0@1a {
+		compatible = "sony,imx415";
+~~~
 
 ### 从传感器另一端把图接完整
 

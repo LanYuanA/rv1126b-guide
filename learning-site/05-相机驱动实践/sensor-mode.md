@@ -28,7 +28,16 @@ awk -f learning-site/examples/imx415-linear-exposure.awk
 
 原厂历史请求行也是 3864×2192、线性和 10 位。该日志并未打印完整的已选寄存器表，不能仅靠这三个字段断定具体是哪一项。应用随后得到的 3840×2160 NV12 属于 ISP 输出的另一层格式。
 
-<Sdk id="sensor-linear-mode" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1085–1090`
+
+~~~c
+static const struct imx415_mode supported_modes[] = {
+	/*
+	 * frame rate = 1 / (Vtt * 1H) = 1 / (VMAX * 1H)
+	 * VMAX >= (PIX_VWIDTH / 2) + 46 = height + 46
+	 */
+	{
+~~~
 
 ## TRY 怎样与 ACTIVE 分开？
 
@@ -44,7 +53,16 @@ fmt->format.field = V4L2_FIELD_NONE;
 
 驱动先按模式集合选一个可用格式，并把实际尺寸和码回填给调用者。支持 subdev API 时，TRY 把结果放进传入的 pad 试探状态，供协商使用。ACTIVE 会更新实例的当前模式和空白区间、link frequency、pixel rate 等关联控制。核对格式时保留请求、返回与正确 pad 的 ACTIVE 读回。ACTIVE 更新和开流写表是两个阶段。
 
-<Sdk id="mode" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1487–1492`
+
+~~~c
+static int imx415_set_fmt(struct v4l2_subdev *sd,
+			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_format *fmt)
+{
+	struct imx415 *imx415 = to_imx415(sd);
+	const struct imx415_mode *mode;
+~~~
 
 ## 帧长改变后，为什么要改曝光上限和 SHR0？
 

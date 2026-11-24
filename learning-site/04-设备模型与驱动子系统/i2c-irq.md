@@ -18,15 +18,42 @@ rg -n 'static int rk3x_i2c_setup|reg_addr \|= msgs\[0\].buf|reg_addr, REG_MRXRAD
 
 `i2c_transfer` 取得总线段的锁，再交给 `__i2c_transfer`。提交两条消息为一组，内核其他使用同段锁的传输者就不会在这两条消息中间插入自己的事务。core 在普通上下文调用 `adap->algo->master_xfer(adap, msgs, num)`。本板操作表指向 `rk3x_i2c_xfer`，它传 `false` 进入 `rk3x_i2c_xfer_common` 的非轮询分支。core 还能在仲裁丢失等返回 `-EAGAIN` 时作有限重试。要判断一次逻辑读取对应几次总线尝试，需要更靠近硬件的证据。
 
-<Sdk id="i2c-core-xfer" />
+源码摘录 `kernel-6.1/drivers/i2c/i2c-core-base.c:2313–2318`
+
+~~~c
+	ret = adap->algo->master_xfer(adap, msgs, num);
+
+if (ret != -EAGAIN)
+	break;
+if (time_after(jiffies, orig_jiffies + adap->timeout))
+	break;
+~~~
 
 核心管理调用和重试等公共行为。adapter 的算法表把事务交到 Rockchip 实现。
 
-<Sdk id="rk-i2c-algorithm" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:1813–1818`
+
+~~~c
+	.master_xfer		= rk3x_i2c_xfer,
+	.master_xfer_atomic	= rk3x_i2c_xfer_polling,
+	.functionality		= rk3x_i2c_func,
+};
+
+static const struct rk3x_i2c_soc_data rv1108_soc_data = {
+~~~
 
 `rk3x_i2c_setup` 能识别本例的“两条消息、首条为小于四字节的写、次条为读”。寄存器号的两个字节已在 `msgs[0].buf` 中。驱动按 `buf[i] << (i * 8)` 把它们放进控制器的 `REG_MRXRADDR` 字段，各字节另带有效位。`REG_MRXADDR` 放器件地址及有效位。`i2c->msg = &msgs[1]` 保留读缓冲，控制器负责前面的短写。`rk3x_i2c_setup` 此时返回 2，意思是已经为**这两条**做了准备。对上层正式报告成功还要等硬件完成。
 
-<Sdk id="rk-i2c-setup" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:1426–1431`
+
+~~~c
+static int rk3x_i2c_setup(struct rk3x_i2c *i2c, struct i2c_msg *msgs, int num)
+{
+	u32 addr = (msgs[0].addr & 0x7f) << 1;
+	int ret = 0;
+
+	/*
+~~~
 
 **看似颠倒的一道读码题。** 假设 `buf[0]=0x31`、`buf[1]=0x1a`，忽略有效位，`MRXRADDR` 的低 16 位是多少？只取表达式的数值，是 `0x1a31`。但第一个要发送的字节装在最低八位，仍然先发 `31`。MMIO 寄存器的**字段布局**和导线上的**字节顺序**各有各的定义。控制器的 `i2c_writel` 最终使用 `writel(value, i2c->regs + offset)` 写本 SoC 的寄存器。传感器内部的 `0x311a` 则随 I2C 消息传到芯片，两者处在不同地址空间。
 
@@ -47,19 +74,55 @@ setup 置 busy=true
 正常返回消息数 2 ──→ sensor helper 转成整数 ID，返回 0
 ~~~
 
-<Sdk id="i2c-controller" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:1965–1970`
+
+~~~c
+i2c->regs = devm_platform_ioremap_resource(pdev, 0);
+if (IS_ERR(i2c->regs))
+	return PTR_ERR(i2c->regs);
+
+/*
+ * Switch to new interface if the SoC also offers the old one.
+~~~
 
 控制器初始化阶段准备资源；真正遇到传输时才执行 start。
 
-<Sdk id="rk-i2c-start" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:626–631`
+
+~~~c
+static void rk3x_i2c_start_fifo(struct rk3x_i2c *i2c)
+{
+	u32 val = i2c_readl(i2c, REG_CON) & REG_CON_TUNING_MASK;
+	bool auto_stop = rk3x_i2c_auto_stop(i2c);
+	unsigned long flags;
+	unsigned int offset;
+~~~
 
 启动总线动作后，调用线程按条件等待控制器结束。
 
-<Sdk id="rk-i2c-wait" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:1585–1590`
+
+~~~c
+	timeout = wait_event_timeout(i2c->wait, !i2c->busy,
+				     msecs_to_jiffies(xfer_time));
+} else {
+	disable_irq(i2c->irq);
+	rk3x_i2c_start(i2c, polling);
+
+~~~
 
 等待方只检查驱动状态。结束路径服务 IRQ 并发布完成条件。
 
-<Sdk id="rk-i2c-finish" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:880–885`
+
+~~~c
+static void rk3x_i2c_handle_stop(struct rk3x_i2c *i2c, unsigned int ipd)
+{
+	unsigned int con;
+
+	if (!(ipd & REG_INT_STOP)) {
+		rk3x_i2c_stop(i2c, -EIO);
+~~~
 
 把 `rk3x_i2c_xfer_common` 普通路径的三行放在一起看。若把最后两行简单替换成固定延时，快速设备白等，慢设备又可能没完成。源码中的 `timeout` 是等待宏的结果。成功、错误还要读控制器状态才能区分。
 
@@ -76,7 +139,16 @@ setup 置 busy=true
 2. **怎样睡，怎样醒。** `wait_event_timeout(i2c->wait, !i2c->busy, …)` 等一个可复查的条件。硬件快到在线程真正睡下前已完成，也能由条件直接通过。正常收尾会先更新 `busy`，再通过 `rk3x_i2c_wake_up` 唤醒。普通线程可以在这里睡眠，硬中断处理代码需要及时处理状态并返回。唤醒只是让等待者可继续调度，不保证它立刻占到 CPU。[复习中断与并发锁](../03-Linux内核/interrupts.md)
 3. **怎样交付结果。** 在完成/失败之后，线程检查 `timeout` 和 `i2c->error`。等待超时的路径打印 `ipd` 和 `state`，报告 `-ETIMEDOUT`。ISR 对未被忽略的接收 NACK 可设置 `-ENXIO`。正常仅在传输完成后把消息数返回给 sensor。同步接口给调用者的保证解释了为何本例可以使用调用期间有效的栈缓冲。
 
-<Sdk id="rk-i2c-irq" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:918–923`
+
+~~~c
+static irqreturn_t rk3x_i2c_irq(int irqno, void *dev_id)
+{
+	struct rk3x_i2c *i2c = dev_id;
+	unsigned int ipd;
+
+	spin_lock(&i2c->lock);
+~~~
 
 **对照完成时刻。** 请在图上分别标出寄存器准备完毕、等待条件满足、调用者已得到有效 `id`。如果只抓到了 `setup` 的返回值 2，能证明哪一个？只能证明在此路径上备好了两个消息，还缺硬件完成以及 helper 对结果的交付。
 
@@ -129,11 +201,29 @@ rg -n 'imx415 [34]-001a: (Detected imx415 id|Unexpected sensor id)' \
 
 先盖住第二行右边的 `ret`，只看 `000000`。你会如何区分“器件回了 0”和“驱动从未拿到有效数据”？再露出 `ret(-5)`，对照中篇的 C 实验。出错时实验的哨兵仍为 `deadbeef`，实际驱动却打印 `000000`，两者完全可以由同一条提前返回路径解释。
 
-<Sdk id="imx415-check-id" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3127–3132`
+
+~~~c
+static int imx415_check_sensor_id(struct imx415 *imx415,
+				  struct i2c_client *client)
+{
+	struct device *dev = &imx415->client->dev;
+	u32 id = 0;
+	int ret;
+~~~
 
 读到 ID 只验证控制链。向媒体框架发布子设备还有独立的成功和错误分支。
 
-<Sdk id="i2c-read" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1408–1413`
+
+~~~c
+static int imx415_read_reg(struct i2c_client *client, u16 reg, unsigned int len,
+			   u32 *val)
+{
+	struct i2c_msg msgs[2];
+	u8 *data_be_p;
+	__be32 data_be = 0;
+~~~
 
 | 原始观测 | 在这次开机中可以说明什么 | 要继续推断还需要的证据 |
 | --- | --- | --- |

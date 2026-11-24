@@ -35,8 +35,26 @@ line_time = div_u64(line_time, vblank_def + sensor->raw_rect.height);
 
 拿候选模式里 30 fps、RAW 高 2192、VTS 2250 为例，默认 vblank 为 58。若当前值也为 58，则行时间约 14814 ns，整数运算得 859 µs，与历史值一致。这给出一组可解释输入，当前实际控件与输出路径还要现场采集。按此模型大约要 68 行才能满足阈值，但更改它会改变帧周期和最大曝光。判断影响时先做读回或抓时序，再和真实掉帧、坏帧、延迟分布对照。
 
-<Sdk id="vblank" />
-<Sdk id="cif-line-time" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/cif/capture.c:13689–13694`
+
+~~~c
+			  "Warning: vblank need >= 1000us if isp work in online, cur %u us\n",
+			  vblank_us);
+	else
+		v4l2_dbg(3, rkcif_debug, &dev->v4l2_dev, "vblank time %u us\n", vblank_us);
+}
+
+~~~
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/cif/capture.c:1789–1794`
+
+~~~c
+		 vblank_def, vblank_curr);
+	return -EINVAL;
+}
+line_time = div_u64(1000000000, def_fps);
+line_time = div_u64(line_time, vblank_def + sensor->raw_rect.height);
+v4l2_dbg(3, rkcif_debug, &cif_dev->v4l2_dev,
+~~~
 
 ## dynamic debug 控制的是打印调用点
 

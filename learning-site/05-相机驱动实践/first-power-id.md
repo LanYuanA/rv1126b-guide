@@ -82,7 +82,16 @@ if (imx415->is_thunderboot) {
 
 thunderboot 分支直接通过这一项。普通分支调用 4.12 的双消息 helper。它在完成两条消息后才写 id，否则保留初始值。检查针对驱动的预期常量 0xe0。控制链应答证据只覆盖这一寄存器在当次访问中的结果。模组料号、完整模式能力和实际出流仍有独立验收点。
 
-<Sdk id="imx415-check-id" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3127–3132`
+
+~~~c
+static int imx415_check_sensor_id(struct imx415 *imx415,
+				  struct i2c_client *client)
+{
+	struct device *dev = &imx415->client->dev;
+	u32 id = 0;
+	int ret;
+~~~
 
 ## 按首个缺失的证据继续排错
 

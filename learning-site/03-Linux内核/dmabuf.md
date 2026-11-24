@@ -50,7 +50,16 @@ if (ret < 0) {
 
 fd 安装将该对象关联的 file 放入进程 fd 表。通过进程间传递取得的 fd 数字可不同。同一个整数也会被关闭后重新使用，排错应记录对象标识和代次。
 
-<Sdk id="vb2-export-plane" />
+源码摘录 `kernel-6.1/drivers/media/common/videobuf2/videobuf2-core.c:2238–2243`
+
+~~~c
+int vb2_core_expbuf(struct vb2_queue *q, int *fd, unsigned int type,
+		unsigned int index, unsigned int plane, unsigned int flags)
+{
+	struct vb2_buffer *vb = NULL;
+	struct vb2_plane *vb_plane;
+	int ret;
+~~~
 
 ## 导入端为什么要重新建立设备映射？
 
@@ -75,11 +84,29 @@ if (dma_map_sgtable(db_attach->dev, sgt, dma_dir, 0)) {
 
 第一个参数是导入设备，不同硬件的 mask、域和段约束可以不同。该实现可缓存符合条件的已有映射。消费方应遵循自己的 map、unmap、detach 与 put 协议，设备还在访问时不能撤销。用户关掉原 fd，导入者的独立引用可能仍存在。
 
-<Sdk id="dmabuf-device-attach" />
+源码摘录 `kernel-6.1/drivers/dma-buf/dma-buf.c:1087–1092`
+
+~~~c
+struct dma_buf_attachment *dma_buf_attach(struct dma_buf *dmabuf,
+					  struct device *dev)
+{
+	return dma_buf_dynamic_attach(dmabuf, dev, NULL, NULL);
+}
+EXPORT_SYMBOL_NS_GPL(dma_buf_attach, DMA_BUF);
+~~~
 
 建立 attachment 后，映射返回可用于该设备的段。失败要结合导入设备查 DMA 约束。
 
-<Sdk id="dmabuf-device-map" />
+源码摘录 `kernel-6.1/drivers/dma-buf/dma-buf.c:1212–1217`
+
+~~~c
+struct sg_table *dma_buf_map_attachment(struct dma_buf_attachment *attach,
+					enum dma_data_direction direction)
+{
+	struct sg_table *sg_table;
+	int r;
+
+~~~
 
 ## 三种状态分别用什么证明？
 
@@ -91,7 +118,16 @@ if (dma_map_sgtable(db_attach->dev, sgt, dma_dir, 0)) {
 
 dma_fence 表示一个异步工作何时完成。支持隐式同步的组件可通过 dma_resv 交换相关 fence，显式接口可传递同步对象。若组件使用完成回调，分派者就等待所有用到原帧的回调。设计时核对当前 API 是否提供这些语义以及谁负责等待。CPU 经 DMA-BUF mmap 访问时，用 DMA_BUF_IOCTL_SYNC 的 START 和 END 包住访问并标注方向。有其他任务同时访问时仍需执行顺序保证。
 
-<Sdk id="dmabuf-sync-uapi" />
+源码摘录 `kernel-6.1/include/uapi/linux/dma-buf.h:30–35`
+
+~~~c
+* memory.  To manage coherency, DMA_BUF_IOCTL_SYNC must be used to bracket
+* any CPU access to give the kernel the chance to shuffle memory around if
+* needed.
+*
+* Prior to accessing the map, the client must call DMA_BUF_IOCTL_SYNC
+* with DMA_BUF_SYNC_START and the appropriate read/write flags.  Once the
+~~~
 
 ## 怎样证明预览和编码共享了输入？
 

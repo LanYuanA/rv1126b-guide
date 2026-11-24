@@ -22,8 +22,26 @@ SDK 的 `bpf()` 入口把 cmd、attr 及 size 传到内部处理函数，`BPF_PR
 return __sys_bpf(cmd, USER_BPFPTR(uattr), size);
 ~~~
 
-<Sdk id="bpf-syscall-entry" />
-<Sdk id="bpf-program-verifier" />
+源码摘录 `kernel-6.1/kernel/bpf/syscall.c:5122–5127`
+
+~~~c
+SYSCALL_DEFINE3(bpf, int, cmd, union bpf_attr __user *, uattr, unsigned int, size)
+{
+	return __sys_bpf(cmd, USER_BPFPTR(uattr), size);
+}
+
+static bool syscall_prog_is_valid_access(int off, int size,
+~~~
+源码摘录 `kernel-6.1/kernel/bpf/syscall.c:2641–2646`
+
+~~~c
+err = bpf_check(&prog, attr, uattr);
+if (err < 0)
+	goto free_used_maps;
+
+prog = bpf_prog_select_runtime(prog, &err);
+if (err < 0)
+~~~
 
 ## tracepoint、kprobe 和 BTF 各自适用什么情况
 
@@ -32,8 +50,26 @@ return __sys_bpf(cmd, USER_BPFPTR(uattr), size);
 - **BTF** 提供结构、字段和函数等类型描述。libbpf 可以用目标内核 BTF 处理 CO-RE 对类型访问的重定位。一些附着类型还需要相关 BTF ID。缺 BTF 会阻断依赖它的程序和 loader。有些固定上下文和接口的 BPF 程序不依赖目标 BTF，仍要满足系统调用和附着条件。
 - **配置依赖**　这份 6.1 源码的 BPF_EVENTS 依赖 BPF_SYSCALL、PERF_EVENTS 与 kprobe 或 uprobe 事件条件，不能只看事件文件名就推断可挂。DEBUG_INFO_BTF 还依赖 BPF_SYSCALL 和编译时调试选项，生成时要核对 pahole 与 DWARF。 [Linux 6.1 BTF 说明](https://docs.kernel.org/6.1/bpf/btf.html)
 
-<Sdk id="bpf-trace-kconfig" />
-<Sdk id="bpf-btf-kconfig" />
+源码摘录 `kernel-6.1/kernel/trace/Kconfig:696–701`
+
+~~~text
+config BPF_EVENTS
+	depends on BPF_SYSCALL
+	depends on (KPROBE_EVENTS || UPROBE_EVENTS) && PERF_EVENTS
+	bool
+	default y
+	help
+~~~
+源码摘录 `kernel-6.1/lib/Kconfig.debug:349–354`
+
+~~~text
+config DEBUG_INFO_BTF
+	bool "Generate BTF type information"
+	depends on !DEBUG_INFO_SPLIT && !DEBUG_INFO_REDUCED
+	depends on !GCC_PLUGIN_RANDSTRUCT || COMPILE_TEST
+	depends on BPF_SYSCALL
+	depends on !DEBUG_INFO_DWARF5 || PAHOLE_VERSION >= 121
+~~~
 
 ## 在 WSL 对比“缺入口”和“权限受限”
 

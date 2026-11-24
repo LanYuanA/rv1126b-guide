@@ -31,7 +31,15 @@ VI 填 `stIspOpt.u32BufCount=2`，选择 `VI_V4L2_MEMORY_TYPE_DMABUF`，写输�
 
 VPSS 先 CreateGrp，再以组和输出通道为参数设置属性，随后 EnableChn、StartGrp。缩放要改的是输出通道的 `u32Width/u32Height`，VENC 的图片宽高和实际输入相匹配。buffer 的虚宽、虚高以及行对齐另行核对。RV1126B 样例还可设置 wrap line，默认禁用。若要开启，VPSS 和 VENC 侧均要确认对应属性、限制和效果。
 
-<Sdk id="rockit-vpss-channel" />
+流程示例（自写），对照位置 `external/samples/simple_test/simple_vi_bind_vpss_bind_venc.c:398–403`
+
+~~~c
+/* group 已创建，attrs 描述 output 通道的格式与尺寸。 */
+int ret = RK_MPI_VPSS_SetChnAttr(group, output, &attrs);
+if (ret != RK_SUCCESS)
+    return ret;
+/* 属性就绪后才能启用输出通道。 */
+~~~
 
 ~~~c
 stvpssChn.enModId = RK_ID_VPSS;
@@ -41,7 +49,15 @@ stvpssChn.s32ChnId = 0;
 
 首次绑定从 `(VI, 0, s32chnlId)` 到 `(VPSS, 0, 0)`；第二次从 `(VPSS, 0, 0)` 到 `(VENC, 0, 0)`。和 V4L2 媒体图的 link 一样，端点写错会让链路无法按计划工作。二者属于不同接口层。SYS Bind 需要模块状态及格式成立，媒体图则表达内核子设备和 pad 的关系。绑定成功还要通过编码出包与解码文件验证。
 
-<Sdk id="bind" />
+流程示例（自写），对照位置 `external/samples/simple_test/simple_vi_bind_vpss_bind_venc.c:588–593`
+
+~~~c
+/* vi 与 vpss 分别描述已经配置好的源端与目的端。 */
+int ret = RK_MPI_SYS_Bind(&vi, &vpss);
+if (ret != RK_SUCCESS)
+    return ret;
+/* 下一条绑定将 VPSS 输出连接到 VENC。 */
+~~~
 
 ## 编码包由谁持有、什么时候还
 
@@ -53,7 +69,16 @@ s32Ret = RK_MPI_VENC_ReleaseStream(0, &stFrame);
 
 归还后应用再访问映射得到的地址就可能读到下一次复用的数据。若备份文件写入慢，可考虑把码流安全移交到独立有限队列，量化保留原缓冲或复制压缩数据的成本。样例的等待参数 `-1` 会无限等输出，对关停敏感的实现应选择可响应的等待方案。样例计数还用 `loopCount > g_s32FrameCnt` 判断结束，复现实验时不能把此选项直接当成严格的包数断言。
 
-<Sdk id="rockit-venc-pack" />
+源码摘录 `external/rockit/mpi/sdk/include/rk_comm_venc.h:132–137`
+
+~~~c
+typedef struct rkVENC_PACK_S {
+    MB_BLK               pMbBlk;                     /* R; the virtual address of stream */
+    RK_U32               u32Len;                     /* R; the length of stream */
+
+    RK_U64               u64PTS;                     /* R; PTS */
+    RK_BOOL              bFrameEnd;                  /* R; frame end */
+~~~
 
 ## MPP 的编码边界与 Rockit 的模块接口
 
@@ -65,7 +90,16 @@ ret = mpi->encode_put_frame(ctx, frame);
 
 送进去的是待编码原始帧，出来的是压缩码流。若启用切片输出，一帧关联的多个产出还要按包的边界和元数据处理。Rockit 的 `RK_MPI_VENC_*` 面向整套媒体模块通道，MPP 的 `MppApi` 面向独立编解码上下文。两套 API 有不同的对象、返回和归还规则。当前 SDK 的 arm64 RV1126B `librockit.so` 在 ELF 的 NEEDED 中列出 `librockchip_mpp.so.1`。这条依赖能证明该库需要 MPP，单凭它仍无法证明某条路径是否复制或每帧具体走了哪个实现分支。 [Rockchip MPP 源码与架构](https://github.com/rockchip-linux/mpp)
 
-<Sdk id="rockchip-mpp-encode" />
+源码摘录 `external/mpp/test/mpi_enc_test.c:393–398`
+
+~~~c
+ret = mpi->encode_put_frame(ctx, frame);
+if (ret) {
+    mpp_err("chn %d encode put frame failed\n", chn);
+    mpp_frame_deinit(&frame);
+    goto RET;
+}
+~~~
 
 ## 离线复现，以及上板前的检查
 

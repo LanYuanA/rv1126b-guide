@@ -63,7 +63,16 @@ if (clk_get_rate(imx415->xvclk) != imx415->cur_mode->xvclk)
 
 请求来自当前模式的 Hz 值，不能从宏名中的 37M 猜准确数字。父时钟选择、可用分频和其他消费者约束会影响结果。这个版本即使设频报错或读回不一致也继续到 clk_prepare_enable。后者失败才跳转到本函数的回退路径。
 
-<Sdk id="ccf-set-rate" />
+源码摘录 `kernel-6.1/drivers/clk/clk.c:2503–2508`
+
+~~~c
+int clk_set_rate(struct clk *clk, unsigned long rate)
+{
+	int ret;
+
+	if (!clk)
+		return 0;
+~~~
 
 `include/linux/clk.h:1072`
 

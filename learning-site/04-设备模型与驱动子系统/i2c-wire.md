@@ -10,13 +10,31 @@ rg -n '^#define (CHIP_ID|IMX415_REG_CHIP_ID)\s' "$k/drivers/media/i2c/imx415.c"
 rg -A2 'imx415_0: imx415_0@1a' "$k/arch/arm64/boot/dts/rockchip/rv1126b-alientek.dtsi"
 ~~~
 
-本地基线 `a04e4b3c9` 的三个输入是 `CHIP_ID = 0xE0`、`IMX415_REG_CHIP_ID = 0x311A`、`reg = <0x1a>`。源码入口展开后能直接看带行号的上下文。
+本地基线 `a04e4b3c9` 的三个输入是 `CHIP_ID = 0xE0`、`IMX415_REG_CHIP_ID = 0x311A`、`reg = <0x1a>`。下方代码块给出这几处定义，块上方标出文件路径和原始行号。
 
-<Sdk id="imx415-id-defs" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:81–86`
+
+~~~c
+#define CHIP_ID				0xE0
+#define IMX415_REG_CHIP_ID		0x311A
+
+#define IMX415_REG_CTRL_MODE		0x3000
+#define IMX415_MODE_SW_STANDBY		BIT(0)
+#define IMX415_MODE_STREAMING		0x0
+~~~
 
 头部常量描述要访问的内部寄存器和值。板级节点另给这颗器件的总线地址。
 
-<Sdk id="board-dts" />
+源码摘录 `kernel-6.1/arch/arm64/boot/dts/rockchip/rv1126b-alientek.dtsi:489–494`
+
+~~~text
+&i2c3 {
+	status = "okay";
+	pinctrl-0 = <&i2c3m1_pins>;
+
+	imx415_0: imx415_0@1a {
+		compatible = "sony,imx415";
+~~~
 
 下图放在手边。上半部发生在创建和匹配设备时。下半部可以重复很多次，曝光、增益与模式控制也会用到寄存器传输。
 
@@ -115,15 +133,42 @@ rg -n 'adap.algo =|adap.algo_data =|i2c_add_numbered_adapter\(' "$k/drivers/i2c/
 rg -n 'msgs\[0\].addr = client->addr|i2c_transfer\(client->adapter' "$k/drivers/media/i2c/imx415.c"
 ~~~
 
-<Sdk id="i2c-soc-node" />
+源码摘录 `kernel-6.1/arch/arm64/boot/dts/rockchip/rv1126b.dtsi:2539–2544`
+
+~~~text
+i2c3: i2c@21120000 {
+	compatible = "rockchip,rv1126b-i2c";
+	reg = <0x21120000 0x1000>;
+	interrupts = <GIC_SPI 51 IRQ_TYPE_LEVEL_HIGH>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+~~~
 
 SoC 节点描述控制器资源。控制器驱动初始化后把通信能力挂在 adapter 上。
 
-<Sdk id="i2c-adapter-setup" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:1953–1958`
+
+~~~c
+i2c->adap.algo = &rk3x_i2c_algorithm;
+i2c->adap.retries = 3;
+i2c->adap.dev.of_node = pdev->dev.of_node;
+i2c->adap.algo_data = i2c;
+i2c->adap.dev.parent = &pdev->dev;
+i2c->adap.dev.fwnode = fw;
+~~~
 
 adapter 提供传输入口；sensor helper 交给它的是已组织好的两条消息。
 
-<Sdk id="i2c-read" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1408–1413`
+
+~~~c
+static int imx415_read_reg(struct i2c_client *client, u16 reg, unsigned int len,
+			   u32 *val)
+{
+	struct i2c_msg msgs[2];
+	u8 *data_be_p;
+	__be32 data_be = 0;
+~~~
 
 ## 本节复盘
 

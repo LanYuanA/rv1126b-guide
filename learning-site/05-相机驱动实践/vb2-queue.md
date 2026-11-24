@@ -76,7 +76,16 @@ vb->state = state;
 
 稍后解锁，并唤醒 done_wq 上的等待者。poll 返回就绪只给一个观察点，应用仍以 DQBUF 返回判定是否得到槽位。若 ERROR 标志置位，应用按错误帧处理，再根据当前驱动的规则归还。用户实际获得的时间要另外用自己的时钟打点。
 
-<Sdk id="done" />
+源码摘录 `kernel-6.1/drivers/media/common/videobuf2/videobuf2-core.c:1062–1067`
+
+~~~c
+void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
+{
+	struct vb2_queue *q = vb->vb2_queue;
+	unsigned long flags;
+
+	if (WARN_ON(vb->state != VB2_BUF_STATE_ACTIVE))
+~~~
 
 ## 两种超时怎样用最小证据区分？
 

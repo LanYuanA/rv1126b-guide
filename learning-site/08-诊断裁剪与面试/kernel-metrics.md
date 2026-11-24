@@ -16,8 +16,26 @@ import exampleFile from '../examples/proc-snapshot-demo.sh?url'
 
 厂商驱动也可能在 procfs 增加自己的文件。Rockchip CIF 的 procfs 注册所用名字来自 `dev_name(dev->dev)`，实际节点按当前运行时检查。debugfs 预期用于调试，解析器需处理缺失和格式变化。现代内核的 tracefs 可以在 `/sys/kernel/tracing`，部分环境还能从 debugfs 下的 tracing 路径访问。用挂载信息区分文件系统、目录与权限。 [Linux procfs](https://docs.kernel.org/6.1/filesystems/proc.html) · [Linux debugfs](https://docs.kernel.org/6.1/filesystems/debugfs.html)
 
-<Sdk id="cif-proc-registration" />
-<Sdk id="sysfs-cpu-online" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/cif/procfs.c:752–757`
+
+~~~c
+dev->proc_dir = proc_create_data(dev_name(dev->dev), 0444,
+				 NULL, &rkcif_proc_fops,
+				 dev);
+if (!dev->proc_dir) {
+	dev_err(dev->dev, "create proc/%s failed!\n",
+		dev_name(dev->dev));
+~~~
+源码摘录 `kernel-6.1/drivers/base/cpu.c:206–211`
+
+~~~c
+static ssize_t show_cpus_attr(struct device *dev,
+			      struct device_attribute *attr,
+			      char *buf)
+{
+	struct cpu_attr *ca = container_of(attr, struct cpu_attr, attr);
+
+~~~
 
 ## CPU 是否繁忙，取决于哪组差分
 
@@ -33,7 +51,16 @@ system      += cpustat[CPUTIME_SYSTEM];
 
 它们都是随时间累加的计数。采样两次得到 `Δtotal`。本脚本的“执行”是 user、nice、system、irq 和 softirq 的差分合计，iowait、idle、steal 单独显示。guest 及 guest_nice 已分别计入 user/nice，重复加会扩大分母。CPU 宿主统计单位是 USER_HZ tick，可用 `getconf CLK_TCK` 取得；它与内核调度 `CONFIG_HZ` 有不同口径。汇总差分的工作执行百分比不等同于某个线程的 CPU 百分比。iowait 归属在多核系统并不总能可靠按单个进程解释，计数也可能下降；脚本把倒退窗口标为无效。
 
-<Sdk id="proc-stat-cpu-aggregate" />
+源码摘录 `kernel-6.1/fs/proc/stat.c:126–131`
+
+~~~c
+struct kernel_cpustat kcpustat;
+u64 *cpustat = kcpustat.cpustat;
+
+kcpustat_cpu_fetch(&kcpustat, i);
+
+user		+= cpustat[CPUTIME_USER];
+~~~
 
 进程 `/proc/<pid>/stat` 的 utime/stime 可做进程差分，但要保存 starttime 来识别 PID 复用。进程退出后样本可能没有后续值，不能把消失换算成零 CPU。解析 comm 要处理括号内的空格和括号，不能简单按全行第 14、15 列拆；先识别布置在状态字段之前的末尾分隔括号，再按后缀数列。
 
@@ -45,7 +72,16 @@ available = si_mem_available();
 
 `MemFree` 表示当前空闲页，`MemAvailable` 估计在不交换等条件下还能用于新负载的内存，考虑了可回收内容与保留阈值。CMA 关心保留区域及能够找到连续物理页的情况。 `CmaFree` 是 CMA 空闲量，不能凭总量保证某次特定尺寸的分配一定成功。内核输出里标成 kB 的 meminfo 项按 1024 字节换算，脚本转换为 MiB。
 
-<Sdk id="proc-meminfo-available" />
+源码摘录 `kernel-6.1/fs/proc/meminfo.c:54–59`
+
+~~~c
+available = si_mem_available();
+sreclaimable = global_node_page_state_pages(NR_SLAB_RECLAIMABLE_B);
+sunreclaim = global_node_page_state_pages(NR_SLAB_UNRECLAIMABLE_B);
+
+show_val_kb(m, "MemTotal:       ", i.totalram);
+show_val_kb(m, "MemFree:        ", i.freeram);
+~~~
 
 前后两次 MemAvailable 属于两个瞬时快照，差值也会受任务、缓存和分配影响。若想查一个驱动是否泄漏，需要让场景先热身，再反复启动/停止，结合 slab、CMA、DMA-BUF 引用以及 alloc/free 事件。只读一次数值通常无法定位所有者。
 

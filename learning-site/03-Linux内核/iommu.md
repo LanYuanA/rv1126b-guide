@@ -49,7 +49,16 @@ if (!IS_ALIGNED(iova | paddr | size, min_pagesz)) {
 
 代码先从域支持的页大小取最小值，检查三个参数在低位是否都对齐，再按可用粒度继续映射。中途失败时，要回滚已成功的部分，避免保留半份映射。
 
-<Sdk id="iommu-map-range" />
+源码摘录 `kernel-6.1/drivers/iommu/iommu.c:2361–2366`
+
+~~~c
+int iommu_map(struct iommu_domain *domain, unsigned long iova,
+	      phys_addr_t paddr, size_t size, int prot)
+{
+	might_sleep();
+	return _iommu_map(domain, iova, paddr, size, prot, GFP_KERNEL);
+}
+~~~
 
 ## SG 表如何从物理视图变成设备视图？
 
@@ -92,7 +101,16 @@ rg -n -A2 '^&(rkisp|rkcif)_mmu ' "$tree/rv1126b-alientek.dtsi"
 
 本地 SoC 文件各有一个引用，板级文件把两个提供者都标为 okay。源码只能说明这两条候选连接。验证实际一帧要再核对启动所用 DTB、设备绑定、当前域、分配及 DMA API 返回值。尤其是导入到另一个硬件时，原设备的地址不能作为导入设备的映射证据。
 
-<Sdk id="camera-mmu-dt" />
+源码摘录 `kernel-6.1/arch/arm64/boot/dts/rockchip/rv1126b.dtsi:3253–3258`
+
+~~~text
+	iommus = <&rkisp_mmu>;
+	status = "disabled";
+};
+
+rkisp_mmu: iommu@21d07f00 {
+	compatible = "rockchip,iommu-v2";
+~~~
 
 ## fault 时如何缩小假设？
 

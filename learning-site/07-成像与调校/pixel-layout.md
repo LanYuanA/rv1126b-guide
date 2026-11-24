@@ -42,7 +42,16 @@ const uint8_t *chroma = frame + HEIGHT * layout->stride +
 
 本实验的 `frame` 从有效载荷开头算，已知 Y 与 UV 具有相同步长。x/2 定位 2 像素共用的色度块，乘 2 定位交错字节。实际应用要优先用驱动返回值验证尺寸与偏移。SDK 的 `rkisp_set_fmt` 路径按对齐计算 bytesperline 和每个图像区域的大小，只有一个 memory plane 时汇总总大小，说明 width 只是最少的有效行内容。 [Linux NV12 与连续平面布局](https://docs.kernel.org/6.1/userspace-api/media/v4l/pixfmt-yuv-planar.html)
 
-<Sdk id="rkisp-image-layout" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/capture.c:940–945`
+
+~~~c
+    stream->id != RKISP_STREAM_SP)
+	/* compact mode need bytesperline 4byte align */
+	bytesperline = ALIGN(width * fmt->bpp[i] / 8, 256);
+else if (fmt->fmt_type == FMT_TILE)
+	bytesperline = width * fmt->bpp[i];
+else
+~~~
 
 ## 把 YUV 换成可显示的 RGB，还需要哪些信息
 

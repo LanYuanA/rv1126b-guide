@@ -87,7 +87,16 @@ else if (drv->probe)
 
 稳定状态中的 driver 链接可用于理解绑定。探测过程中内核会先建立相应的 sysfs 链接，失败时再撤销。因此遇到启动中的瞬时状态，还应结合驱动日志与后续状态。较细的依赖和失败回退将在 4.5 继续跟读。
 
-<Sdk id="device-add-instance" />
+源码摘录 `kernel-6.1/drivers/base/core.c:3578–3583`
+
+~~~c
+int device_add(struct device *dev)
+{
+	struct device *parent;
+	struct kobject *kobj;
+	struct class_interface *class_intf;
+	int error = -EINVAL;
+~~~
 
 ## I2C3、adapter 和 IMX415 怎么排成树？
 
@@ -112,7 +121,16 @@ client->dev.of_node = of_node_get(info->of_node);
 
 parent 用于设备层级，bus 指定匹配机制，type 表示对象类别，of_node 保留固件来源。注册这些关系时可还未完成任何 sensor 的总线事务。
 
-<Sdk id="i2c-adapter-setup" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:1953–1958`
+
+~~~c
+i2c->adap.algo = &rk3x_i2c_algorithm;
+i2c->adap.retries = 3;
+i2c->adap.dev.of_node = pdev->dev.of_node;
+i2c->adap.algo_data = i2c;
+i2c->adap.dev.parent = &pdev->dev;
+i2c->adap.dev.fwnode = fw;
+~~~
 
 ## 给本板设备做一张身份卡
 

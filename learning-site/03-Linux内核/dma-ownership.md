@@ -66,7 +66,16 @@ else
 	q->dma_dir = q->is_output ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
 ~~~
 
-<Sdk id="camera-dma-alloc" />
+源码摘录 `kernel-6.1/drivers/media/common/videobuf2/videobuf2-cma-sg.c:204–209`
+
+~~~c
+
+if (dma_attrs & DMA_ATTR_FORCE_CONTIGUOUS)
+	ret = vb2_cma_sg_alloc_contiguous(buf);
+else
+	ret = vb2_cma_sg_alloc_compacted(buf, vb->vb2_queue->gfp_flags);
+if (ret)
+~~~
 
 ## 地址已建立，为什么还要 prepare 和 finish？
 

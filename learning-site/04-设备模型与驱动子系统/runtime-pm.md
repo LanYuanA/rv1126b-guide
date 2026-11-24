@@ -36,7 +36,16 @@ pm_runtime_idle(dev);
 
 runtime_resume 调用 sensor 的 power_on，runtime_suspend 调用 power_off。上电只让硬件具备后续操作条件，开流还涉及模式表、控制值与退出 standby。usage_count 降到 0 后，是立即尝试、延后尝试还是因条件不具备而保持运行，要看调用和框架状态。autosuspend 需要额外策略与配对接口，普通 pm_runtime_put 本身不能确定某个固定延时。
 
-<Sdk id="sensor-runtime-pm" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:2740–2745`
+
+~~~c
+static int __maybe_unused imx415_runtime_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct imx415 *imx415 = to_imx415(sd);
+
+~~~
 
 ## 为何 get_sync 返回错误也要减计数？
 

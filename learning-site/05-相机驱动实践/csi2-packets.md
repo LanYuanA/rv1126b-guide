@@ -48,7 +48,16 @@ rg -n -m8 '\.vc\[PAD' "$k/drivers/media/i2c/imx415.c"
 | sensor pad | SGBRG10_1X10 | 框架协商 Bayer 排列与位深，DT 值本身无法表达颜色排列 |
 | 应用内存 | 历史 ISP mainpath 的 NV12 | 应用按 Y 与交错 UV 解释。若直接抓 RAW，另读实际 FourCC、packing 和 stride |
 
-<Sdk id="csi-packet-types" />
+源码摘录 `kernel-6.1/include/media/mipi-csi2.h:12–17`
+
+~~~c
+#define MIPI_CSI2_DT_FS			0x00
+#define MIPI_CSI2_DT_FE			0x01
+#define MIPI_CSI2_DT_LS			0x02
+#define MIPI_CSI2_DT_LE			0x03
+#define MIPI_CSI2_DT_GENERIC_SHORT(n)	(0x08 + (n))	/* 0..7 */
+
+~~~
 
 ## ECC 或 CRC 计数增长，先记录什么？
 

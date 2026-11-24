@@ -30,7 +30,16 @@ unlock_hrtimer_base(timer, &flags);
 
 内核先锁住定时器所属的时钟基座，再把请求交给内部函数登记。若内部函数报告需要更新下一次到期事件，则重新编程。线程何时获得 CPU 仍取决于后续唤醒和调度。
 
-<Sdk id="hrtimer-range" />
+源码摘录 `kernel-6.1/kernel/time/hrtimer.c:1333–1338`
+
+~~~c
+void hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
+			    u64 delta_ns, const enum hrtimer_mode mode)
+{
+	struct hrtimer_clock_base *base;
+	unsigned long flags;
+
+~~~
 
 ## 三类时钟与三个打点阶段
 
@@ -81,7 +90,16 @@ stream->dbg.delay = ns - vb2_buf->timestamp;
 
 前两句把帧序号和已有的帧时间交给 VB2。第三句重新采样时间。这里的 debug interval 用连续两次驱动打点相减，delay 用本次驱动打点与缓冲时间相减。应用实际从 DQBUF 返回需要在调用方另外打点。
 
-<Sdk id="v35-buffer-time" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/capture_v35.c:1135–1140`
+
+~~~c
+buf->vb.sequence = seq;
+vb2_buf->timestamp = ns;
+ns = rkisp_time_get_ns(dev);
+stream->dbg.interval = ns - stream->dbg.timestamp;
+stream->dbg.delay = ns - vb2_buf->timestamp;
+stream->dbg.timestamp = ns;
+~~~
 
 ## 本节复盘
 

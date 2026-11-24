@@ -18,7 +18,16 @@ rg -n -m1 -A5 '^\s*imx415_0@1a \{' output/textbook-check/i2c-candidate.dts
 
 实测片段中有 `compatible = "sony,imx415"`、`reg = <0x1a>`、`clock-names = "xvclk"`。第一个字符串用来找驱动，第二个数用来给器件寻址，第三个名字供驱动请求输入时钟。若第一条命令报找不到 `dtc` 或 DTB，先回第 02 章核对内核输出目录。没有构建产物时仍能用下面的入口跟读 DTS。[交叉编译与启动产物](../01-开发环境/build.md)
 
-<Sdk id="board-dts" />
+源码摘录 `kernel-6.1/arch/arm64/boot/dts/rockchip/rv1126b-alientek.dtsi:489–494`
+
+~~~text
+&i2c3 {
+	status = "okay";
+	pinctrl-0 = <&i2c3m1_pins>;
+
+	imx415_0: imx415_0@1a {
+		compatible = "sony,imx415";
+~~~
 
 ### 顺着 reg 找到它落入的 C 字段
 
@@ -36,11 +45,29 @@ device_register(&client->dev) → 这个实例可以参与驱动匹配
 
 先看第一段的 `of_property_read_u32(node, "reg", &addr)`。字符串 `"reg"` 只在第一处出现，后面的 C 代码传递的是已经解析的地址。`for_each_available_child_of_node` 会筛选可用子节点，读取 `reg` 失败时这一条创建路径会提前返回。此时去传感器里给 `imx415_read_reg` 加打印，观察不到这次失败。
 
-<Sdk id="i2c-of-enum" :start="35" :lines="6" />
+源码摘录 `kernel-6.1/drivers/i2c/i2c-core-of.c:35–40`
+
+~~~c
+ret = of_property_read_u32(node, "reg", &addr);
+if (ret) {
+	dev_err(dev, "of_i2c: invalid reg on %pOF\n", node);
+	return ret;
+}
+
+~~~
 
 解析成功后，地址继续经 board_info 传递。创建 client 时将解析值复制到 `client->addr`。后续驱动组装消息时会读取这一字段。
 
-<Sdk id="i2c-new-client" :start="979" :lines="6" />
+源码摘录 `kernel-6.1/drivers/i2c/i2c-core-base.c:979–984`
+
+~~~c
+client->dev.platform_data = info->platform_data;
+client->flags = info->flags;
+client->addr = info->addr;
+
+client->init_irq = info->irq;
+if (!client->init_irq)
+~~~
 
 **老板级文件怎样表达同一个地址？** 在使用 C 板级文件的系统中，可以事先用 `i2c_register_board_info` 声明适配器编号、设备类型和地址。下面是只用来对照“总线 3 的 0x1a”这一信息的板级写法。第一行的宏填入 `type` 和 `addr`，总线编号则由注册调用传入。
 
@@ -54,11 +81,29 @@ static struct i2c_board_info camera[] = {
 
 现代设备树把板上连接数据放进 DTB，内核可从固件节点同时取得时钟、GPIO、模组字段和 endpoint。这份厂商 IMX415 驱动的 `probe` 会直接读取 `dev->of_node`。只建一个带地址的旧式 `board_info` 能演示 I2C 实例的来源，要满足本驱动的完整资源契约还需要那些固件描述。已经由 DTS 枚举的同一器件无需再登记一遍。[Linux 6.1 的 I2C 设备实例化方法](https://docs.kernel.org/6.1/i2c/instantiating-devices.html)
 
-<Sdk id="i2c-board-info" />
+源码摘录 `kernel-6.1/include/linux/i2c.h:452–457`
+
+~~~c
+#define I2C_BOARD_INFO(dev_type, dev_addr) \
+	.type = dev_type, .addr = (dev_addr)
+
+
+#if IS_ENABLED(CONFIG_I2C)
+/*
+~~~
 
 **一个本版 SDK 才看得到的细节。** 公共板级文件里有多种同地址的候选模组。本版 `i2c_new_client_device` 检查同地址已注册实例的数量，把它传给 `i2c_dev_set_name`。普通名字形如 `3-001a`，计数非零的分支会追加后缀。因此调试时请把目录名和它的 `of_node/compatible` 对起来。三个候选的软件名字并不能举证插座上装了三颗芯片。
 
-<Sdk id="i2c-client-name" />
+源码摘录 `kernel-6.1/drivers/i2c/i2c-core-base.c:877–882`
+
+~~~c
+static void i2c_dev_set_name(struct i2c_adapter *adap,
+			     struct i2c_client *client,
+			     struct i2c_board_info const *info,
+			     int status)
+{
+	struct acpi_device *adev = ACPI_COMPANION(&client->dev);
+~~~
 
 **从地址追到代码。** 对 `&i2c3 { … imx415_0@1a { reg = <0x1a>; … }; };` 画三列，分别填“谁决定总线”“谁填写器件地址”“谁决定寄存器号”。最后一列应该空到读驱动代码时才填 `0x311a`。这样就能解释为什么改变寄存器选择通常不需要重新编译 DTB。
 
@@ -78,15 +123,42 @@ rg -n 'could not get module information|Failed to get endpoint|devm_clk_get|ret 
 
 `rk3x_i2c_probe(struct platform_device *pdev)` 为主控注册 adapter。`imx415_probe(struct i2c_client *client, …)` 才是为这颗传感器初始化状态。`sensor_mod_init` 调用 `i2c_add_driver` 登记了 `imx415_i2c_driver`。在本板 DT 路径，`i2c_device_match` 优先用 OF 匹配表对照 `"sony,imx415"`，I2C core 的 `i2c_device_probe` 最终取 `driver->probe` 调用。回想温度计示例，把“操作表”和“传入实例”分别换成 `imx415_i2c_driver` 和 `client`。设备和驱动谁先注册都可能，设备模型在双方可用时才安排绑定。
 
-<Sdk id="i2c-match" />
+源码摘录 `kernel-6.1/drivers/i2c/i2c-core-base.c:139–144`
+
+~~~c
+static int i2c_device_match(struct device *dev, struct device_driver *drv)
+{
+	struct i2c_client	*client = i2c_verify_client(dev);
+	struct i2c_driver	*driver;
+
+
+~~~
 
 总线比对固件描述和 ID 后，最终使用实际驱动登记的探测函数。
 
-<Sdk id="i2c-probe-call" />
+源码摘录 `kernel-6.1/drivers/i2c/i2c-core-base.c:588–593`
+
+~~~c
+if (driver->probe_new)
+	status = driver->probe_new(client);
+else if (driver->probe)
+	status = driver->probe(client,
+			       i2c_match_id(driver->id_table, client));
+else
+~~~
 
 I2C core 负责调用已匹配的函数；IMX415 的驱动表提供具体回调。
 
-<Sdk id="imx415-driver" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3366–3371`
+
+~~~c
+static const struct of_device_id imx415_of_match[] = {
+	{ .compatible = "sony,imx415" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, imx415_of_match);
+#endif
+~~~
 
 ### 按第一次会失败的位置读 probe
 
@@ -98,19 +170,55 @@ I2C core 负责调用已匹配的函数；IMX415 的驱动表提供具体回调�
 | 校验身份 | 普通启动调用 `imx415_read_reg`。`is_thunderboot` 分支会打印跳过 ID 校验并直接返回 0 | 查这一次究竟出现 `Detected …`、`Unexpected …`，还是 `skip sensor id check` |
 | 向媒体框架发布 | 设置媒体实体与 pad，调用 `v4l2_async_register_subdev_sensor` | 即使已读对 ID，注册失败仍需清理资源。媒体设备和帧到达需另找证据 |
 
-<Sdk id="probe" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3163–3168`
+
+~~~c
+static int imx415_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
+{
+	struct device *dev = &client->dev;
+	struct device_node *node = dev->of_node;
+	struct imx415 *imx415;
+~~~
 
 实例先从匹配与属性解析得到配置，随后准备时钟和电源。
 
-<Sdk id="power" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:2604–2609`
+
+~~~c
+int __imx415_power_on(struct imx415 *imx415)
+{
+	int ret;
+	struct device *dev = &imx415->client->dev;
+	if (!IS_ERR_OR_NULL(imx415->pins_default)) {
+		ret = pinctrl_select_state(imx415->pinctrl,
+~~~
 
 软件完成这条上电路径后，普通 probe 才尝试读寄存器并比较返回的 ID。
 
-<Sdk id="imx415-publish" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3281–3286`
+
+~~~c
+ret = __imx415_power_on(imx415);
+if (ret)
+	goto err_free_handler;
+
+ret = imx415_check_sensor_id(imx415, client);
+if (ret)
+~~~
 
 这里只表示框架发布动作。第一次读 ID 是前面的控制链判断，可以单独回看。
 
-<Sdk id="imx415-check-id" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3127–3132`
+
+~~~c
+static int imx415_check_sensor_id(struct imx415 *imx415,
+				  struct i2c_client *client)
+{
+	struct device *dev = &imx415->client->dev;
+	u32 id = 0;
+	int ret;
+~~~
 
 **用三张故障卡检验顺序。** A 卡只有 client 目录，没有 driver 链接。B 卡能看到 `Failed to get xvclk`。C 卡看到 `Unexpected sensor id`。先不看答案，按“已到达的最深阶段”排序，为每张卡写下一个值得观察的字段。
 
@@ -162,11 +270,29 @@ return 0;
 
 对照下面的 `imx415_read_reg`。`msgs[0]` 和 `msgs[1]` 都使用 `client->addr`。`flags=0` 表示写，`I2C_M_RD` 表示读。`len` 的单位在每条消息里都是字节。`buf` 的归属和方向却不同。把同一只 `client`、同一个 `reg` 和同一个 `len=1` 代入源码，按下表检查。
 
-<Sdk id="i2c-msg" />
+源码摘录 `kernel-6.1/include/uapi/linux/i2c.h:73–78`
+
+~~~c
+struct i2c_msg {
+	__u16 addr;
+	__u16 flags;
+#define I2C_M_RD		0x0001	/* guaranteed to be 0x0001! */
+#define I2C_M_TEN		0x0010	/* use only if I2C_FUNC_10BIT_ADDR */
+#define I2C_M_DMA_SAFE		0x0200	/* use only in kernel space */
+~~~
 
 消息结构定义地址、方向、长度和缓冲。驱动按这套约定分别准备写地址和收数据。
 
-<Sdk id="i2c-read" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1408–1413`
+
+~~~c
+static int imx415_read_reg(struct i2c_client *client, u16 reg, unsigned int len,
+			   u32 *val)
+{
+	struct i2c_msg msgs[2];
+	u8 *data_be_p;
+	__be32 data_be = 0;
+~~~
 
 | 现在看哪一行 | 缓冲里的实际字节 | 谁生产、谁消费 |
 | --- | --- | --- |
@@ -191,11 +317,29 @@ return 0;
 
 在 SDK 中对照这三处判断。`i2c_transfer(..., ARRAY_SIZE(msgs))` 的成功返回值单位是**消息条数**。即使读一字节，这里也期望返回 2。`imx415_write_reg` 调用 `i2c_master_send` 时却检查 **`len + 2` 个字节**，因为一次写缓冲由两个地址字节和若干数据字节组成。最后，`imx415_check_sensor_id` 将局部变量 `id` 初始化为 0，取得 helper 的 `ret` 后对 `id != CHIP_ID` 做判断，打印 `id` 与 `ret`，并返回 `-ENODEV`。
 
-<Sdk id="imx415-write" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1358–1363`
+
+~~~c
+static int imx415_write_reg(struct i2c_client *client, u16 reg,
+			    u32 len, u32 val)
+{
+	u32 buf_i, val_i;
+	u8 buf[6];
+	u8 *val_p;
+~~~
 
 寄存器写是另一种事务。读 ID 则要组合地址写与数据读，再核对返回值。
 
-<Sdk id="imx415-check-id" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:3127–3132`
+
+~~~c
+static int imx415_check_sensor_id(struct imx415 *imx415,
+				  struct i2c_client *client)
+{
+	struct device *dev = &imx415->client->dev;
+	u32 id = 0;
+	int ret;
+~~~
 
 这就能解释一个很容易误判的现场。若传输失败，helper 在给 `*val` 赋值前已经返回 `-EIO`。调用者的 `id` 仍可能是初值 0，所以日志里的 `000000` 并不足以当作总线上真的收到了 `00`。若传输完整却读到 `00`，上层也会报 ID 异常，但这次日志里的 `ret` 应是 0。**把数字和它来自哪一层一起记下来。**
 

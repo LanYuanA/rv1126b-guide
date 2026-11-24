@@ -32,7 +32,16 @@ ctrl.id    = V4L2_CID_VBLANK;
 ctrl.value = frame_line_length - sensor_desc.sensor_output_height;
 ~~~
 
-<Sdk id="rkaiq-sensor-linear" />
+源码摘录 `external/camera_engine_rkaiq/rkaiq/hwi_c/aiq_sensorHw.c:74–79`
+
+~~~c
+memset(&ctrl, 0, sizeof(ctrl));
+ctrl.id    = V4L2_CID_VBLANK;
+ctrl.value = frame_line_length - sensor_desc.sensor_output_height;
+if (AiqV4l2SubDevice_ioctl(pSnsHw->mSd, VIDIOC_S_CTRL, &ctrl) < 0) {
+    LOGE_CAMHW_SUBM(SENSOR_SUBM, "cam%d failed to set vblank result(val: %d)",
+                    pSnsHw->mCamPhyId, ctrl.value);
+~~~
 
 在 IMX415 的 `imx415_set_ctrl()`，修改 VBLANK 时先更新线性曝光上限。后续曝光控制把行数转换成 SHR0。运行时电源状态可以影响是否立即写寄存器，正常开流时框架还会把控件值应用到设备。S_CTRL 成功、读到寄存器、画面变化是不同时间点。 [7.1 曝光行时间和 readback](./optics-exposure.md)
 
@@ -40,7 +49,16 @@ ctrl.value = frame_line_length - sensor_desc.sensor_output_height;
 max = imx415->cur_mode->height + ctrl->val - 8;
 ~~~
 
-<Sdk id="imx415-vblank-exposure" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:2937–2942`
+
+~~~c
+case V4L2_CID_VBLANK:
+	if (imx415->cur_mode->hdr_mode == NO_HDR) {
+		/* Update max exposure while meeting expected vblanking */
+		max = imx415->cur_mode->height + ctrl->val - 8;
+		__v4l2_ctrl_modify_range(imx415->exposure,
+				 imx415->exposure->minimum, max,
+~~~
 
 在保持同一行时间的线性模式里，若 VTS 从 2250 改为 2700，估算周期由 33.33 ms 变为 40.00 ms，即 30 fps 变为 25 fps。同步记录 sensor SOF 和应用 DQBUF 时戳，才能把期望周期与实际处理延迟分开。
 

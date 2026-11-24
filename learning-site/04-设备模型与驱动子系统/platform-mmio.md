@@ -78,7 +78,16 @@ static inline u32 i2c_readl(struct rk3x_i2c *i2c, unsigned int offset)
 
 offset 是控制器内的寄存器偏移。要读 sensor 的 0x311a，则由驱动构造 I2C 传输，经 adapter 和控制器发送，结果由传感器返回。两层地址即使数值偶然相同，解释者也不同。
 
-<Sdk id="platform-rk-map" />
+源码摘录 `kernel-6.1/drivers/i2c/busses/i2c-rk3x.c:1966–1971`
+
+~~~c
+if (IS_ERR(i2c->regs))
+	return PTR_ERR(i2c->regs);
+
+/*
+ * Switch to new interface if the SoC also offers the old one.
+ * The control bit is located in the GRF register space.
+~~~
 
 ## IRQ 索引、硬件号、Linux 号怎么区分？
 

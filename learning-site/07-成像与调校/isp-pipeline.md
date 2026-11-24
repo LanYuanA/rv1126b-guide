@@ -35,7 +35,16 @@ isp3_param_write(params_vdev, pval->gr, ISP3X_BLS1_D_FIXED, id);
 
 切换 Bayer 相位时相同通道的偏移要送到不同位置。出现暗处偏色可先验证像素原点、黑位表按哪个 Bayer 对齐，再去调矩阵或白平衡。
 
-<Sdk id="isp35-black-level" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/isp_params_v35.c:318–323`
+
+~~~c
+case RAW_GBRG:
+	isp3_param_write(params_vdev, pval->r, ISP3X_BLS1_C_FIXED, id);
+	isp3_param_write(params_vdev, pval->gr, ISP3X_BLS1_D_FIXED, id);
+	isp3_param_write(params_vdev, pval->gb, ISP3X_BLS1_A_FIXED, id);
+	isp3_param_write(params_vdev, pval->b, ISP3X_BLS1_B_FIXED, id);
+	break;
+~~~
 
 ## 从单色采样重建颜色，再考虑颜色和纹理
 
@@ -62,7 +71,16 @@ if (module_cfg_update & ISP35_MODULE_DEBAYER)
 
 `module_cfg_update` 指定要更新配置的模块。另一组 `module_en_update` 与 `module_ens` 管理哪些模块要改变开关、改变到何状态。存一份 IQ 参数时同时存这几类信息，才能知道配置最终是否作用在启用路径上。若要调试画面，既看实际参数包字段也看选用的路径。
 
-<Sdk id="isp35-other-config" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/isp_params_v35.c:4959–4964`
+
+~~~c
+
+if (module_cfg_update & ISP35_MODULE_CAC)
+	isp_cac_config(params_vdev, &new_params->others.cac_cfg, id);
+if (module_cfg_update & ISP35_MODULE_LSC)
+	isp_lsc_config(params_vdev, &new_params->others.lsc_cfg, id);
+if (module_cfg_update & ISP35_MODULE_DEBAYER)
+~~~
 
 统计路径记录当前图像的 frame_id、驱动维护的 params_id，并填入 VB2 的 sequence 与时间戳，然后标 DONE。params_id 是匹配参数与统计的线索。它仍需要与 sensor 控制生效时刻、输入帧标识以及级间延迟一起核对。
 
@@ -71,7 +89,16 @@ cur_stat_buf->frame_id = cur_frame_id;
 cur_stat_buf->params_id = params_vdev->cur_frame_id;
 ~~~
 
-<Sdk id="isp35-stats-frame-id" />
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/isp/isp_stats_v35.c:666–671`
+
+~~~c
+if (cur_stat_buf) {
+	cur_stat_buf->frame_id = cur_frame_id;
+	cur_stat_buf->params_id = params_vdev->cur_frame_id;
+	cur_stat_buf->stat.info2ddr.buf_fd = -1;
+	cur_stat_buf->stat.info2ddr.owner = 0;
+	cur_stat_buf->stat.buf_aiawb_index = -1;
+~~~
 
 ## 先用人工样本预测变化，再检查运行态
 

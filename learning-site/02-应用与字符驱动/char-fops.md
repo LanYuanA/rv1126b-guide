@@ -95,15 +95,42 @@ if (filp->f_op->open) {
 
 ## read 怎样拿到这个对象和用户缓冲
 
-<Sdk id="file-ops" />
+源码摘录 `kernel-6.1/include/linux/fs.h:2168–2173`
+
+~~~c
+struct file_operations {
+	struct module *owner;
+	loff_t (*llseek) (struct file *, loff_t, int);
+	ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
+	ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
+	ssize_t (*read_iter) (struct kiocb *, struct iov_iter *);
+~~~
 
 操作表定义回调的参数和返回类型。VFS 从本次 file 上取得它并根据访问方式分派。
 
-<Sdk id="vfs-read-dispatch" />
+源码摘录 `kernel-6.1/fs/read_write.c:450–455`
+
+~~~c
+ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+{
+	ssize_t ret;
+
+	if (!(file->f_mode & FMODE_READ))
+		return -EBADF;
+~~~
 
 read 返回只结束一次读操作。文件引用最终释放时另走 release。
 
-<Sdk id="vfs-final-put" />
+源码摘录 `kernel-6.1/fs/file_table.c:294–299`
+
+~~~c
+static void __fput(struct file *file)
+{
+	struct dentry *dentry = file->f_path.dentry;
+	struct vfsmount *mnt = file->f_path.mnt;
+	struct inode *inode = file->f_inode;
+	fmode_t mode = file->f_mode;
+~~~
 
 对照已有的 read 回调签名，按参数逐个解释。
 

@@ -53,7 +53,16 @@ nm -D "$lab/target" | rg 'open|ioctl'
 
 在本版 Linux 找 `load_elf_binary`，沿程序头寻找 PT_INTERP。函数读出其中的路径并调用 `open_exec`，错误指针通过 PTR_ERR 转回负错误码。解释器路径没有找到时，外层 exec 可能返回 ENOENT，即使原程序本身确实存在。
 
-<Sdk id="elf-open-interpreter" />
+源码摘录 `kernel-6.1/fs/binfmt_elf.c:900–905`
+
+~~~c
+if (elf_ppnt->p_type != PT_INTERP)
+	continue;
+
+/*
+ * This is the program interpreter used for shared libraries -
+ * for now assume that this is an a.out format binary.
+~~~
 
 ### sysroot、动态链接与静态链接
 
@@ -154,15 +163,42 @@ rg -n 'CONFIG_VIDEO_IMX415' drivers/media/i2c/Makefile ../output/kernel-baseline
 
 Kconfig 声明选项、类型和依赖。defconfig 给出板型建议，生成的 `.config` 才是本次求解后的选择。Kbuild 的 `obj-$(CONFIG_VIDEO_IMX415)` 把选择映射为内建对象、可加载模块或忽略。`y` 时要在内核对象/符号中找驱动，`m` 时要考虑根文件系统中的模块、依赖和加载时机。主机还会编译并运行 dtc 等工具，设置 `CROSS_COMPILE` 无法解决 host 缺少头文件。
 
-<Sdk id="kconfig-defconfig" />
+源码摘录 `kernel-6.1/scripts/kconfig/Makefile:93–98`
+
+~~~make
+%_defconfig: $(obj)/conf
+	$(Q)$< $(silent) --defconfig=arch/$(SRCARCH)/configs/$@ $(Kconfig)
+
+configfiles=$(wildcard $(srctree)/kernel/configs/$@ $(srctree)/arch/$(SRCARCH)/configs/$@)
+
+%.config: $(obj)/conf
+~~~
 
 默认配置目标提供输入。选项是否可选及依赖什么，要看驱动自己的 Kconfig。
 
-<Sdk id="imx415-kconfig" />
+源码摘录 `kernel-6.1/drivers/media/i2c/Kconfig:810–815`
+
+~~~text
+config VIDEO_IMX415
+	tristate "Sony IMX415 sensor support"
+	depends on I2C && VIDEO_DEV
+	depends on MEDIA_CAMERA_SUPPORT
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+~~~
 
 实际构建选择由输出目录的 .config 给出。Makefile 再把这个选择转换成对象是否参与构建。
 
-<Sdk id="imx415-kbuild" />
+源码摘录 `kernel-6.1/drivers/media/i2c/Makefile:106–111`
+
+~~~make
+obj-$(CONFIG_VIDEO_IMX415) += imx415.o
+obj-$(CONFIG_VIDEO_IMX464) += imx464.o
+obj-$(CONFIG_VIDEO_IMX492) += imx492.o
+obj-$(CONFIG_VIDEO_IMX498) += imx498.o
+obj-$(CONFIG_VIDEO_IMX577) += imx577.o
+obj-$(CONFIG_VIDEO_IMX582) += imx582.o
+~~~
 
 如果要确认当前源码仍能生成同样的默认配置，从 WSL 仓库根目录运行下面这段。`O=` 指向单独的目录，只生成配置所需的宿主工具和 `.config`。完整内核构建可沿用上一节。
 
@@ -203,7 +239,16 @@ file "$base/vmlinux" "$base/arch/arm64/boot/Image" \
 
 在 `scripts/Makefile.host` 看 cmd_host-csingle。命令从 HOSTCC 起步，拿 hostc_flags 和 KBUILD_HOSTLDFLAGS 生成宿主可执行文件。命令边上的 HOSTCC 标签是在简洁日志里识别这一路的入口，V=1 可查看实际命令行。错误发生时先定位正在生成哪个文件、它由谁执行，再分别检查头文件和库。
 
-<Sdk id="kbuild-host-compile" />
+源码摘录 `kernel-6.1/scripts/Makefile.host:109–114`
+
+~~~make
+# host-csingle -> Executable
+quiet_cmd_host-csingle 	= HOSTCC  $@
+      cmd_host-csingle	= $(HOSTCC) $(hostc_flags) $(KBUILD_HOSTLDFLAGS) -o $@ $< \
+		$(KBUILD_HOSTLDLIBS) $(HOSTLDLIBS_$(target-stem))
+$(host-csingle): $(obj)/%: $(src)/%.c FORCE
+	$(call if_changed_dep,host-csingle)
+~~~
 
 | 简洁日志的线索 | 查什么 | 哪条证据能改变判断 |
 | --- | --- | --- |
@@ -226,7 +271,13 @@ ls "$sdk/device/rockchip/common/scripts"/{mk-rootfs.sh,mk-firmware.sh}
 
 第一个命令会看到 auto-MIPI 和固定屏幕版本。auto 配置还能列出多个 DTB，这解释了为什么 build 目录里有一份 DTB 不能证明 bootloader 选了它。`mk-kernel.sh` 描述厂商如何组织内核相关产物，`mk-rootfs.sh` 与 `mk-firmware.sh` 分别是用户空间和固件阶段的入口。真正部署前应记录引导日志里所选配置、运行活动树、现有可恢复镜像与校验值，并核对板修订。仅修改 GStreamer 或 IQ 文件通常属于 rootfs/运行配置；仅修改 sensor 驱动需判断它是内建还是模块；修改引脚接线描述则需更新引导器实际加载的 DTB。这样才知道该重建哪一层。
 
-<Sdk id="sdk-multi-dtb" />
+流程示例（自写），对照位置 `device/rockchip/common/scripts/mk-kernel.sh:88–93`
+
+~~~bash
+read -r -a candidates <<< "$RK_KERNEL_MULTI_DTS"
+(( ${#candidates[@]} > 0 )) || exit 1
+# 每个候选项后续分别用于生成对应 DTB。
+~~~
 
 ## 本节复盘
 

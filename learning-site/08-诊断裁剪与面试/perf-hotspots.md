@@ -26,7 +26,16 @@ err = security_perf_event_open(&attr, PERF_SECURITY_OPEN);
 
 event 字符串能在工具解析，只说明可以尝试。若显示 not supported，查 PMU 和实际事件；若报权限错误，查 `perf_event_paranoid`、运行 scope 与能力。计数器不足时事件复用，需保留实际运行比例。目标程序、共享库和内核符号分别按构建映射。 `--call-graph fp` 基于 frame pointer，缺失时链会断或留下地址；DWARF 展开可作为有额外代价的选择。Self 样本是该函数自身指令位置的份额，Children 还会归入子调用的累计样本。 [Linux perf 权限及数据范围](https://docs.kernel.org/admin-guide/perf-security.html)
 
-<Sdk id="perf-event-open-core" />
+源码摘录 `kernel-6.1/kernel/events/core.c:12357–12362`
+
+~~~c
+/* Do we allow access to perf_event_open(2) ? */
+err = security_perf_event_open(&attr, PERF_SECURITY_OPEN);
+if (err)
+	return err;
+
+if (!attr.exclude_kernel) {
+~~~
 
 ## 编译一个可控制的 CPU/等待对照
 

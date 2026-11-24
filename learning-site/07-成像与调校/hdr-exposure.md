@@ -31,8 +31,26 @@ import exampleFile from '../examples/hdr-merge-demo.awk?url'
 
 VC 是 CSI-2 数据流的标记。PAD 项是驱动向使用者表达的映射，不能按四个数组项推导四份曝光。对照 mode 的 VC、CIF 所请求的通道索引及 HDR 模式、ISP 对长短缓冲的组织，再用运行态证据验证。以全幅有效负载粗算，双曝光 30 fps 约需要 `3864×2192×10×30×2 = 5.08 Gbit/s`。4 lane×1486 Mbit/s 给出约 5.94 Gbit/s 的名义链路总速率。短包、空白、对齐和段内调度会影响实际余量。 [5.6 CSI-2 包与 VC](../05-相机驱动实践/csi2-packets.md)
 
-<Sdk id="imx415-hdr2-mode" />
-<Sdk id="cif-hdr-channel-query" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:1123–1128`
+
+~~~c
+.vts_def = 0x08fc * 2,
+.global_reg_list = imx415_global_10bit_3864x2192_regs,
+.reg_list = imx415_hdr2_10bit_3864x2192_1485M_regs,
+.hdr_mode = HDR_X2,
+.mipi_freq_idx = 2,
+.bpp = 10,
+~~~
+源码摘录 `kernel-6.1/drivers/media/platform/rockchip/cif/capture.c:1063–1068`
+
+~~~c
+ret = v4l2_subdev_call(sd,
+		       core, ioctl,
+		       RKMODULE_GET_CHANNEL_INFO,
+		       &ch_info);
+if (!ret) {
+	fmt.format.width = ch_info.width;
+~~~
 
 ## 看曝光请求怎样走到 SHR、RHS
 
@@ -47,8 +65,26 @@ shr0 = fsc - l_exp_time;
 
 初次开流前请求可能先缓存，随后在 stream 路径应用。函数用 group hold 组织寄存器更新，源码注释把增益和时间标为不同的生效帧。现场仍要把 ioctl、寄存器读回、SOF 和实际画面对齐。失败时不要凭返回码推断寄存器一定都保持原值，需要记录阶段并复核。
 
-<Sdk id="hdr" />
-<Sdk id="imx415-hdr2-rhs" />
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:2006–2011`
+
+~~~c
+static int imx415_set_hdrae(struct imx415 *imx415,
+			    struct preisp_hdrae_exp_s *ae)
+{
+	struct i2c_client *client = imx415->client;
+	u32 l_exp_time, m_exp_time, s_exp_time;
+	u32 l_a_gain, m_a_gain, s_a_gain;
+~~~
+源码摘录 `kernel-6.1/drivers/media/i2c/imx415.c:2074–2079`
+
+~~~c
+shr0 = fsc - l_exp_time;
+
+if (imx415->cur_mode->height == 2192) {
+	rhs1_max = min(RHS1_MAX_X2(BRL_ALL), ((shr0 - 9u) / 4 * 4 + 1));
+	rhs1_min = max(SHR1_MIN_X2 + 8u, imx415->rhs1_old + 2 * BRL_ALL - fsc + 2);
+} else {
+~~~
 
 ## 离线先复算时序，再观察高光与错位
 

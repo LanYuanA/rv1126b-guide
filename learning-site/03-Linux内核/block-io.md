@@ -48,7 +48,16 @@ if (unlikely(bio_may_exceed_limits(bio, &q->limits))) {
 
 这里按队列限制检查 bio。拆分之后的请求生成仍需题设之外的资源，例如队列标签。合并允许的条件也受方向、相邻范围和队列限制影响。块设备整合的粒度会直接改变统计中的请求数。
 
-<Sdk id="block-bio-submit" />
+源码摘录 `kernel-6.1/block/blk-core.c:824–829`
+
+~~~c
+void submit_bio(struct bio *bio)
+{
+	if (blkcg_punt_bio_submit(bio))
+		return;
+
+	if (bio_op(bio) == REQ_OP_READ) {
+~~~
 
 ## 排队、派发和完成在哪里打点？
 
@@ -74,7 +83,16 @@ __blk_mq_end_request(rq, error);
 
 完整请求结束路径先根据结果更新剩余字节及关联 bio，再做请求结束处理。驱动也可以分段完成请求。若使用 trace 计算 issue 到 complete，先核对实际事件是否只覆盖一部分、是否发生重排或重试。时间差描述块层看见的区间，无法单独证明断电后仍可读取。
 
-<Sdk id="block-request-end" />
+源码摘录 `kernel-6.1/block/blk-mq.c:1048–1053`
+
+~~~c
+void blk_mq_end_request(struct request *rq, blk_status_t error)
+{
+	if (blk_update_request(rq, error, blk_rq_bytes(rq)))
+		BUG();
+	__blk_mq_end_request(rq, error);
+}
+~~~
 
 ## 怎么读短窗口的 diskstats？
 
